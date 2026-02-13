@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>THE MUANG TIMES - Professional Investment Dashboard</title>
+    <title>THE MUANG TIMES - Live Investment Dashboard</title>
     <!-- Tailwind CSS Play CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts: Serif & Sans -->
+    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700;900&family=Noto+Sans+KR:wght@300;400;700;900&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Noto Sans KR', sans-serif; }
@@ -20,7 +20,7 @@
 <body class="bg-white text-slate-900">
     <div id="root"></div>
 
-    <!-- Library CDNs -->
+    <!-- 라이브러리 로드 -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -36,7 +36,7 @@
         };
 
         const App = () => {
-            // 섹터 데이터 정의 (ReferenceError 해결을 위해 최상단에 배치)
+            // 섹터 정의
             const sectors = [
                 { id: 'aiInfra', name: 'AI 인프라 (CARR/VRT/ETN)', icon: "cpu" },
                 { id: 'techLev', name: '나스닥 레버리지 (QLD)', icon: "zap" },
@@ -44,39 +44,42 @@
                 { id: 'defense', name: '유럽 방산 (ETF)', icon: "shield" },
             ];
 
-            // API 키 관리
+            // 상태 관리
             const [savedKey, setSavedKey] = useState(localStorage.getItem('gemini_api_key') || "");
             const [showKeyInput, setShowKeyInput] = useState(!localStorage.getItem('gemini_api_key'));
             const [tempKey, setTempKey] = useState("");
-
+            
             const [loading, setLoading] = useState(false);
-            const [aiLoading, setAiLoading] = useState(false);
             const [currentTime, setCurrentTime] = useState(new Date());
-            const [weather, setWeather] = useState({ temp: '-15°C', condition: '맑음', location: '철산동' });
+            const [weather, setWeather] = useState({ temp: '조회 중...', condition: '확인 중', location: '철산동' });
+            
+            // 실시간 시장 지수 초기값 (로딩 시 표시)
+            const [marketIndices, setMarketIndices] = useState([
+                { name: "NASDAQ 100", value: "Loading", today: "...", trend: "up" },
+                { name: "S&P 500", value: "Loading", today: "...", trend: "up" },
+                { name: "KOSPI", value: "Loading", today: "...", trend: "up" },
+                { name: "KOSDAQ", value: "Loading", today: "...", trend: "up" },
+                { name: "구리 (Copper)", value: "Loading", today: "...", trend: "up" },
+            ]);
+
             const [newsData, setNewsData] = useState({
                 aiInfra: [], techLev: [], crypto: [], defense: [],
-                aiAnalysis: "", deepDive: ""
+                aiAnalysis: "실시간 데이터를 분석하고 있습니다...", deepDive: ""
             });
-            const [hotTopics, setHotTopics] = useState(["잠시만 기다려 주세요."]);
+            const [hotTopics, setHotTopics] = useState(["전 세계 실시간 헤드라인을 수집 중입니다..."]);
             
             const [tickerIndex, setTickerIndex] = useState(0);
             const [topicIndex, setTopicIndex] = useState(0);
 
-            const marketIndices = [
-                { name: "KOSDAQ", value: "862.10", today: "-0.12%", yesterday: "+0.55%", trend: "down" },
-                { name: "KOSPI", value: "2,582.41", today: "+0.45%", yesterday: "+1.20%", trend: "up" },
-                { name: "NASDAQ 100", value: "17,920.50", today: "+1.24%", yesterday: "-0.82%", trend: "up" },
-                { name: "S&P 500", value: "5,042.30", today: "+0.82%", yesterday: "-0.45%", trend: "up" },
-                { name: "구리 (Copper)", value: "$4.12", today: "+1.05%", yesterday: "+0.30%", trend: "up" },
-            ];
-
+            // 타이머 로직
             useEffect(() => {
                 const tickerTimer = setInterval(() => setTickerIndex(p => (p + 1) % marketIndices.length), 4000);
                 const topicTimer = setInterval(() => { if (hotTopics.length > 1) setTopicIndex(p => (p + 1) % hotTopics.length); }, 5000);
                 const clockTimer = setInterval(() => setCurrentTime(new Date()), 1000);
                 return () => { clearInterval(tickerTimer); clearInterval(topicTimer); clearInterval(clockTimer); };
-            }, [hotTopics.length]);
+            }, [hotTopics.length, marketIndices.length]);
 
+            // Gemini API 호출
             const callGemini = async (payload, model = "gemini-2.5-flash-preview-09-2025") => {
                 if (!savedKey) return null;
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${savedKey}`;
@@ -86,12 +89,9 @@
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(payload)
                     });
-                    if (!response.ok) {
-                        const error = await response.json();
-                        if (response.status === 401) {
-                            localStorage.removeItem('gemini_api_key');
-                            setShowKeyInput(true);
-                        }
+                    if (response.status === 401) {
+                        localStorage.removeItem('gemini_api_key');
+                        setShowKeyInput(true);
                         return null;
                     }
                     return await response.json();
@@ -107,44 +107,54 @@
                 }
             };
 
-            const fetchRealTimeTopics = async () => {
-                try {
-                    const prompt = `오늘 현재 전세계 주요 정치 경제 헤드라인 7개 수집. 35자 이내 한국어 요약. 반드시 JSON { "topics": ["뉴스1", "뉴스2", ...] } 형식으로만 응답해.`;
-                    const result = await callGemini({
-                        contents: [{ parts: [{ text: prompt }] }],
-                        tools: [{ "google_search": {} }]
-                    });
-                    let text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-                    if (text) {
-                        const topics = JSON.parse(text.replace(/```json|```/g, "")).topics;
-                        if (Array.isArray(topics) && topics.length > 0) setHotTopics(topics);
-                    }
-                } catch (e) { 
-                    setHotTopics(["실시간 뉴스를 불러오는데 실패했습니다.", "API 키 상태를 확인하거나 잠시 후 다시 시도해주세요."]);
-                }
-            };
-
-            const fetchDashboardData = async () => {
+            // 모든 임시 데이터를 배제한 실시간 데이터 수집
+            const fetchFullLiveDashboard = async () => {
                 if (!savedKey) return;
                 setLoading(true);
                 try {
-                    const newsPrompt = `오늘자 투자 뉴스 리포트 작성. 섹터: AI인프라, 나스닥 레버리지, 가상자산, 유럽방산. JSON { aiInfra: [{title, summary, source, impact}], techLev: [], crypto: [], defense: [], strategy: "", weather: {temp, condition} } 형식으로만 응답.`;
-                    const newsRes = await callGemini({
-                        contents: [{ parts: [{ text: newsPrompt }] }],
+                    const fullPrompt = `
+                    당신은 전문 투자 분석가입니다. 다음 정보들을 실시간으로 검색하여 JSON 형식으로만 응답하세요.
+                    1. 대한민국 경기도 광명시 철산동의 현재 기온과 날씨 상태.
+                    2. 현재 시점의 실시간 시장 지수: NASDAQ 100, S&P 500, KOSPI, KOSDAQ, 구리(Copper) 선물 가격. (가격, 전일대비 등락률, 트렌드 포함)
+                    3. AI 인프라, 나스닥 레버리지, 가상자산, 유럽 방산 섹터의 가장 최신 뉴스 리포트 (섹터당 2개).
+                    4. 현재 전세계 정치/경제 분야의 가장 핫한 글로벌 헤드라인 7개.
+                    
+                    응답 JSON 구조:
+                    {
+                      "weather": {"temp": "기온", "condition": "날씨상태"},
+                      "indices": [
+                        {"name": "지수명", "value": "현재가", "today": "등락률", "trend": "up/down"}
+                      ],
+                      "news": {
+                        "aiInfra": [{"title": "", "summary": "", "source": "", "impact": "호재/악재"}],
+                        "techLev": [], "crypto": [], "defense": []
+                      },
+                      "topics": ["헤드라인1", "헤드라인2", ...],
+                      "strategy": "준범님을 위한 오늘의 투자 전략 한 줄"
+                    }`;
+                    
+                    const result = await callGemini({
+                        contents: [{ parts: [{ text: fullPrompt }] }],
+                        tools: [{ "google_search": {} }],
                         generationConfig: { responseMimeType: "application/json" }
                     });
-                    if (newsRes?.candidates?.[0]?.content?.parts?.[0]?.text) {
-                        const content = JSON.parse(newsRes.candidates[0].content.parts[0].text);
-                        setNewsData(prev => ({ ...prev, ...content, aiAnalysis: content.strategy }));
+                    
+                    const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (text) {
+                        const data = JSON.parse(text);
+                        if (data.weather) setWeather(prev => ({ ...prev, ...data.weather }));
+                        if (data.indices) setMarketIndices(data.indices);
+                        if (data.news) setNewsData(prev => ({ ...prev, ...data.news, aiAnalysis: data.strategy }));
+                        if (data.topics) setHotTopics(data.topics);
                     }
-                    await fetchRealTimeTopics();
-                } catch (e) { console.error(e); } finally { setLoading(false); }
+                } catch (e) { console.error("데이터 수집 실패:", e); } finally { setLoading(false); }
             };
 
-            useEffect(() => { if (savedKey) fetchDashboardData(); }, [savedKey]);
+            useEffect(() => { if (savedKey) fetchFullLiveDashboard(); }, [savedKey]);
 
             return (
                 <div className="min-h-screen bg-white">
+                    {/* API 키 입력 모달 */}
                     {showKeyInput && (
                         <div className="fixed inset-0 bg-slate-900/95 z-[100] flex items-center justify-center p-4 backdrop-blur-md">
                             <div className="bg-white p-8 border-4 border-slate-900 shadow-[12px_12px_0px_#2563eb] max-w-md w-full animate-in">
@@ -152,9 +162,8 @@
                                     <Icon name="key" className="w-6 h-6 text-blue-600" /> API KEY REQUIRED
                                 </h3>
                                 <p className="text-sm text-slate-600 mb-6 leading-relaxed font-medium">
-                                    GitHub 보안을 위해 소스 코드에 키를 저장하지 않습니다. <br/>
-                                    Google AI Studio에서 발급받은 키를 입력해주세요. <br/>
-                                    <span className="text-xs text-blue-600 font-bold underline cursor-pointer" onClick={() => window.open('https://aistudio.google.com/app/apikey')}>키 발급 받으러 가기 ↗</span>
+                                    임시 데이터가 없는 실시간 시스템을 가동하려면 API 키가 필요합니다. <br/>
+                                    Google AI Studio에서 발급받은 키를 입력해주세요.
                                 </p>
                                 <input 
                                     type="password" 
@@ -163,11 +172,8 @@
                                     value={tempKey}
                                     onChange={(e) => setTempKey(e.target.value)}
                                 />
-                                <button 
-                                    onClick={handleSaveKey}
-                                    className="w-full bg-blue-600 text-white font-black py-4 hover:bg-slate-900 transition-all uppercase tracking-widest active:scale-95 shadow-[4px_4px_0px_#000]"
-                                >
-                                    Activate The Muang Times
+                                <button onClick={handleSaveKey} className="w-full bg-blue-600 text-white font-black py-4 hover:bg-slate-900 transition-all uppercase tracking-widest active:scale-95 shadow-[4px_4px_0px_#000]">
+                                    Connect Real-Time System
                                 </button>
                             </div>
                         </div>
@@ -178,30 +184,28 @@
                         <div className="max-w-7xl mx-auto flex justify-between items-center">
                             <div className="flex items-center gap-4">
                                 <span className="flex items-center gap-1.5"><Icon name="globe" className="w-3.5 h-3.5" /> Market Pulse</span>
-                                <span className="text-slate-300">|</span>
-                                <span className="text-blue-700">Global Markets Live</span>
+                                <button onClick={() => { localStorage.removeItem('gemini_api_key'); window.location.reload(); }} className="hover:text-rose-600 transition-colors border-l pl-4 border-slate-200 uppercase leading-none">Key Reset</button>
                             </div>
-                            <div className="flex items-center gap-4">
-                                <span className="text-slate-700">{weather.location} <Icon name="sun" className="inline w-3 h-3 text-orange-500 ml-1" /> {weather.temp}</span>
+                            <div className="flex items-center gap-4 font-bold text-slate-700">
+                                <span>광명 철산동 <Icon name="sun" className="inline w-3 h-3 text-orange-500 ml-1" /> {weather.temp} ({weather.condition})</span>
                                 <span className="text-slate-300">|</span>
-                                <div className="flex items-center gap-2">
-                                    <Icon name="calendar" className="w-3 h-3" /> {currentTime.toLocaleDateString()} ({['일','월','화','수','목','금','토'][currentTime.getDay()]})
-                                    <Icon name="clock" className="w-3 h-3 ml-1" /> {currentTime.toLocaleTimeString()}
-                                </div>
+                                <span>{currentTime.toLocaleTimeString()}</span>
                             </div>
                         </div>
                     </div>
 
-                    {/* 헤더 */}
+                    {/* 메인 헤더 */}
                     <header className="max-w-7xl mx-auto px-6 py-10 border-b-4 border-slate-900 flex flex-col md:flex-row justify-between items-end gap-6">
                         <div className="flex-1">
                             <div className="inline-flex items-center gap-2 bg-slate-900 text-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] mb-4 shadow-[3px_3px_0px_#2563eb]">
-                                <Icon name="sparkles" className="w-3 h-3 text-blue-400" /> Edited by Junbeom Lee
+                                <Icon name="sparkles" className="w-3 h-3 text-blue-400" /> Live Updating System
                             </div>
-                            <h1 className="text-7xl font-serif font-black tracking-tight leading-none uppercase">
+                            <h1 className="text-7xl font-serif font-black tracking-tight leading-none uppercase select-none">
                                 <span className="text-blue-700">The Muang</span> <span className="text-slate-900">Times</span>
                             </h1>
                         </div>
+                        
+                        {/* 실시간 시장 지수 티커 (AI 수집 데이터) */}
                         <div className="text-right flex flex-col items-end shrink-0">
                             <div className="bg-yellow-400 px-5 border-2 border-slate-900 shadow-[4px_4px_0px_#000] min-w-[320px] h-[75px] overflow-hidden relative">
                                 <div className="ticker-transition" style={{ transform: `translateY(-${tickerIndex * 75}px)` }}>
@@ -213,26 +217,24 @@
                                             </div>
                                             <div className="flex gap-4 mt-1">
                                                 <span className={`text-[10px] font-black uppercase tracking-wider ${idx.trend === 'up' ? 'text-rose-700' : 'text-blue-700'}`}>Today {idx.today} {idx.trend === 'up' ? '▲' : '▼'}</span>
-                                                <span className="text-[10px] text-slate-700 font-black uppercase tracking-wider">Yesterday {idx.yesterday}</span>
                                             </div>
                                         </div>
                                     ))}
                                 </div>
                             </div>
-                            <p className="text-slate-500 text-[10px] font-black mt-2 tracking-widest uppercase italic font-serif">GMTCK DRE JUNBUM'S LIVE TRACKER</p>
+                            <p className="text-slate-500 text-[10px] font-black mt-2 tracking-widest uppercase italic font-serif tracking-tighter">GMTCK DRE JUNBUM'S LIVE MONITOR</p>
                         </div>
                     </header>
 
-                    {/* 글로벌 토픽 */}
+                    {/* 실시간 글로벌 헤드라인 */}
                     <section className="bg-slate-50 py-8 border-b border-slate-200">
                         <div className="max-w-7xl mx-auto px-6 flex flex-col lg:flex-row items-center gap-6">
-                            <div className="bg-white p-4 border-4 border-blue-500/20 shadow-sm shrink-0 rounded-sm">
-                                <Icon name="alert-circle" className="w-8 h-8 text-blue-700" />
+                            <div className="bg-white p-4 border-2 border-slate-900 shadow-[4px_4px_0px_#2563eb]">
+                                <Icon name="alert-circle" className="w-6 h-6 text-blue-700" />
                             </div>
                             <div className="flex-1 flex flex-col h-24 overflow-hidden relative justify-center border-l-2 border-slate-200 pl-6">
                                 <div className="flex items-center gap-3 mb-1 shrink-0">
-                                    <span className="text-xs font-black text-blue-700 uppercase tracking-widest">Global Topic</span>
-                                    <Icon name="volume-2" className="w-4 h-4 text-blue-400" />
+                                    <span className="text-xs font-black text-blue-700 uppercase tracking-widest leading-none underline decoration-blue-200 decoration-2">Global Live News</span>
                                 </div>
                                 <div className="flex-1 overflow-hidden relative h-16">
                                     <div className="ticker-transition absolute w-full top-0 left-0" style={{ transform: `translateY(-${topicIndex * 4}rem)` }}>
@@ -244,22 +246,29 @@
                                     </div>
                                 </div>
                             </div>
-                            <div className="flex gap-2 shrink-0">
-                                <button onClick={() => { setAiLoading(true); fetchDashboardData(); }} className="bg-slate-800 text-white px-6 py-2 font-black text-sm hover:bg-blue-600 transition-all shadow-[4px_4px_0px_#000] flex items-center gap-2">
-                                    <Icon name="sparkles" className="w-4 h-4" /> AI 심층 분석
-                                </button>
-                                <button onClick={fetchDashboardData} className="bg-white border-2 border-slate-900 px-6 py-2 font-black text-sm hover:bg-slate-50 shadow-[2px_2px_0px_#000]">뉴스 갱신</button>
-                            </div>
+                            <button onClick={fetchFullLiveDashboard} disabled={loading} className="bg-slate-900 text-white border-2 border-slate-900 px-6 py-2 font-black text-sm hover:bg-blue-600 transition-all shadow-[4px_4px_0px_#000] active:translate-y-0.5 active:shadow-none shrink-0 uppercase tracking-widest">
+                                {loading ? "Updating..." : "Refresh Live"}
+                            </button>
                         </div>
+                        {newsData.aiAnalysis && (
+                            <div className="max-w-7xl mx-auto px-6 mt-6">
+                                <div className="bg-blue-50 border-2 border-blue-100 p-6 rounded-xl animate-in shadow-sm">
+                                    <h3 className="flex items-center gap-2 text-blue-800 font-black mb-2 text-lg font-serif underline decoration-blue-200 underline-offset-4 tracking-tighter uppercase leading-none">
+                                        <Icon name="brain-circuit" className="w-5 h-5" /> Strategic Insight
+                                    </h3>
+                                    <p className="text-blue-900 leading-relaxed text-sm italic font-medium">{newsData.aiAnalysis}</p>
+                                </div>
+                            </div>
+                        )}
                     </section>
 
-                    {/* 뉴스 리포트 */}
+                    {/* 뉴스 리포트 그리드 */}
                     <main className="max-w-7xl mx-auto px-6 py-12 grid grid-cols-1 md:grid-cols-4 gap-10">
                         {sectors.map(s => (
                             <div key={s.id} className="flex flex-col">
                                 <div className="flex items-center gap-2 mb-6 pb-2 border-b-2 border-slate-900">
                                     <Icon name={s.icon} className="w-4 h-4 text-blue-700" />
-                                    <h3 className="font-black uppercase tracking-tighter text-[14px] leading-tight">{s.name}</h3>
+                                    <h3 className="font-black uppercase tracking-tighter text-sm leading-tight">{s.name}</h3>
                                 </div>
                                 <div className="space-y-8 min-h-[300px]">
                                     {loading ? (
@@ -269,7 +278,7 @@
                                         </div>
                                     ) : 
                                         newsData[s.id]?.map((n, idx) => (
-                                            <div key={idx} className="group cursor-default border-b border-slate-100 pb-5 last:border-0">
+                                            <div key={idx} className="group cursor-default border-b border-slate-100 pb-5 last:border-0 hover:bg-slate-50 transition-colors px-1 rounded">
                                                 <div className="flex justify-between text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest leading-none">
                                                     <span>{n.source}</span>
                                                     <span className={n.impact === '호재' ? 'text-rose-600' : 'text-blue-600'}>{n.impact}</span>
@@ -284,7 +293,7 @@
                                         ))
                                     }
                                     {!loading && (!newsData[s.id] || newsData[s.id].length === 0) && (
-                                        <div className="h-32 bg-slate-50 rounded-sm"></div>
+                                        <div className="text-xs text-slate-400 italic">No live data for this sector.</div>
                                     )}
                                 </div>
                             </div>
@@ -295,15 +304,12 @@
                         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center text-[10px] font-bold text-slate-500 uppercase tracking-widest">
                             <div className="text-center md:text-left mb-6 md:mb-0">
                                 <h4 className="text-white text-lg font-black mb-2 tracking-tighter">THE MUANG TIMES</h4>
-                                <p>© 2026 JUNBEOM LEE INVESTMENT SYSTEM. ALL RIGHTS RESERVED.</p>
-                                <p className="mt-1">LOCATION: GWANGMYEONG · GMTCK DRE OFFICE</p>
+                                <p>© 2026 JUNBEOM LEE REAL-TIME DASHBOARD. NO PLACEHOLDERS.</p>
+                                <p className="mt-1">LOCATION: GWANGMYEONG · GMTCK DRE MONITORING</p>
                             </div>
-                            <div className="flex gap-8 items-center">
-                                <span className="text-blue-400 flex items-center gap-2 font-black">
-                                    <Icon name="sparkles" className="w-3.5 h-3.5" /> Powered by Gemini 2.5 Flash
-                                </span>
-                                <span className="flex items-center gap-2">
-                                    <Icon name="shield-check" className="w-3.5 h-3.5" /> Secure Edition
+                            <div className="flex gap-8 items-center text-slate-400">
+                                <span className="flex items-center gap-2 font-black">
+                                    <Icon name="sparkles" className="w-3.5 h-3.5" /> Live Data by Gemini 2.5
                                 </span>
                             </div>
                         </div>
