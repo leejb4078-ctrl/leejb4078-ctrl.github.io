@@ -284,9 +284,9 @@
             const [mode, setMode] = useState('menu');
             const [inputData, setInputData] = useState("");
             const [status, setStatus] = useState("");
-            const [geminiInput, setGeminiInput] = useState(() => localStorage.getItem('muang_gemini_key') || "");
+            const [geminiInput, setGeminiInput] = useState(() => localStorage.getItem('muang_groq_key') || "");
             const saveGeminiKey = () => {
-                localStorage.setItem('muang_gemini_key', geminiInput.trim());
+                localStorage.setItem('muang_groq_key', geminiInput.trim());
                 setStatus("Gemini API 키 저장 완료!");
                 setTimeout(() => { setStatus(""); onClose(); }, 1200);
             };
@@ -328,7 +328,7 @@
                                         <Icon name="Bot" className="shrink-0"/><span>한 번만 URL을 입력해두면,{" "}<strong>백그라운드에서 자동 동기화</strong>됩니다.</span>
                                     </div>
                                     <button onClick={() => setMode('google')} type="button" className="w-full py-4 bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-blue-800 shadow-lg"><Icon name="Activity" /> 구글 스프레드시트 API 설정</button>
-                                    <button onClick={() => setMode('gemini')} type="button" className="w-full py-4 bg-indigo-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-indigo-700 shadow-lg"><Icon name="Sparkles" /> Gemini API 키 설정 (뉴스/AI)</button>
+                                    <button onClick={() => setMode('gemini')} type="button" className="w-full py-4 bg-orange-500 text-white font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-orange-600 shadow-lg"><Icon name="Zap" /> Groq API 키 설정 (뉴스/AI, 무료)</button>
                                     <div className="h-px bg-slate-100 my-4"></div>
                                     <button onClick={() => setMode('manual')} type="button" className="w-full py-3.5 bg-slate-100 text-slate-700 font-bold rounded-xl flex items-center justify-center gap-2 hover:bg-slate-200"><Icon name="Edit3" /> 수동으로 텍스트 복사/붙여넣기</button>
                                 </div>
@@ -359,7 +359,7 @@
                                             className="w-full p-3 border border-slate-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none"/>
                                         <p className="text-[10px] text-slate-400">키는 기기 내 로컬에만 저장되며 외부로 전송되지 않습니다.</p>
                                     </div>
-                                    {geminiInput && localStorage.getItem('muang_gemini_key') === geminiInput && (
+                                    {geminiInput && localStorage.getItem('muang_groq_key') === geminiInput && (
                                         <div className="flex items-center gap-2 text-emerald-700 text-xs font-bold bg-emerald-50 border border-emerald-100 rounded-xl p-3">
                                             <span className="w-2 h-2 bg-emerald-500 rounded-full inline-block"></span> 현재 저장된 키와 동일합니다
                                         </div>
@@ -861,25 +861,31 @@
 
             useEffect(() => {
                 const fetchAIAnalysis = async () => {
-                    const apiKey = localStorage.getItem('muang_gemini_key') || "";
-                    if (!apiKey) { setAiResponse("⚙️ Gemini API 키가 설정되지 않았습니다.\n\n내 자산 탭 → 설정 버튼 → 'Gemini API 키 설정'에서 입력해 주세요.\n\naistudio.google.com 에서 무료 발급 가능합니다."); setIsLoading(false); return; }
+                    const apiKey = localStorage.getItem('muang_groq_key') || "";
+                    if (!apiKey) { setAiResponse("⚙️ Groq API 키가 설정되지 않았습니다.\n\n내 자산 탭 → 설정 버튼 → 'Groq API 키 설정'에서 입력해 주세요.\n\nconsole.groq.com 에서 무료 발급 가능합니다."); setIsLoading(false); return; }
                     let assetSummaryText = "현재 내 보유 자산 목록이야:\n";
                     ['usStock', 'krStock', 'others', 'crypto', 'cash'].forEach(cat => {
                         if(holdings[cat]) holdings[cat].forEach(item => { const val = getEstimatedValueKRW(item, marketData); if(val > 0) assetSummaryText += `- ${item.name}: ${Math.round(val/10000)}만원\n`; });
                     });
                     const prompt = `나의 포트폴리오를 분석해줘. 자산 배분의 적절성, 현재 집중된 리스크, 그리고 앞으로의 투자 방향성에 대해 3~4문단으로 짧고 명확하게 조언해줘. 마크다운을 적절히 사용해서 모바일 화면에서 읽기 편하게 만들어줘.\n\n${assetSummaryText}`;
                     try {
-                        let retries = 0, delay = 1000;
-                        while (retries < 5) {
-                            try {
-                                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ contents:[{parts:[{text:prompt}]}], systemInstruction:{parts:[{text:"너는 월스트리트의 최고 자산관리사 'Muang AI'야. 사용자에게 친절하고 객관적인 포트폴리오 피드백을 한국어로 제공해. ✨ 이모지를 적절히 사용해."}]} }) });
-                                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                                const result = await res.json();
-                                const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-                                setAiResponse(text || "분석 결과를 가져올 수 없습니다."); break;
-                            } catch (e) { retries++; if(retries>=5) throw e; await new Promise(r=>setTimeout(r,delay)); delay*=2; }
-                        }
-                    } catch (e) { setAiResponse("AI 연결에 실패했습니다. API 키나 네트워크 상태를 확인해주세요."); }
+                        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                            body: JSON.stringify({
+                                model: 'llama-3.3-70b-versatile',
+                                messages: [
+                                    { role: 'system', content: "너는 월스트리트의 최고 자산관리사 'Muang AI'야. 사용자에게 친절하고 객관적인 포트폴리오 피드백을 한국어로 제공해. ✨ 이모지를 적절히 사용해." },
+                                    { role: 'user', content: prompt }
+                                ],
+                                max_tokens: 1024,
+                            })
+                        });
+                        if (!res.ok) { const err = await res.text(); throw new Error(`HTTP ${res.status}: ${err}`); }
+                        const result = await res.json();
+                        const text = result.choices?.[0]?.message?.content;
+                        setAiResponse(text || "분석 결과를 가져올 수 없습니다.");
+                    } catch (e) { setAiResponse(`AI 연결 실패: ${e.message}`); }
                     finally { setIsLoading(false); }
                 };
                 fetchAIAnalysis();
@@ -1037,7 +1043,7 @@
                 }
 
                 setNewsStatus('loading');
-                const apiKey = localStorage.getItem('muang_gemini_key') || "";
+                const apiKey = localStorage.getItem('muang_groq_key') || "";
                 if (!apiKey) { setNewsStatus('nokey'); return; }
 
                 const holdingsList = userHoldings.join(', ');
@@ -1053,13 +1059,14 @@
                     + "- Return ONLY the JSON array. No other text.";
 
                 try {
-                    // google_search tool 사용 시 responseMimeType 제거해야 함 (충돌)
-                    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
+                    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
                         body: JSON.stringify({
-                            contents: [{ parts: [{ text: promptText }] }],
-                            tools: [{ google_search: {} }],
+                            model: 'llama-3.3-70b-versatile',
+                            messages: [{ role: 'user', content: promptText }],
+                            max_tokens: 2048,
+                            temperature: 0.7,
                         })
                     });
 
@@ -1068,15 +1075,12 @@
                         throw new Error(`HTTP ${res.status}: ${errBody}`);
                     }
                     const data = await res.json();
-
-                    // google_search 응답에서 텍스트 추출 (여러 parts 중 text 찾기)
-                    const parts = data.candidates?.[0]?.content?.parts || [];
-                    const textPart = parts.find(p => p.text)?.text || "";
+                    const textPart = data.choices?.[0]?.message?.content || "";
                     if (!textPart) throw new Error('No text in response');
 
-                    // JSON 블록 추출 (```json ... ``` 또는 [ ... ] 형태)
-                    const jsonMatch = textPart.match(/```json\s*([\s\S]*?)```/) ||
-                                     textPart.match(/```\s*([\s\S]*?)```/) ||
+                    // JSON 블록 추출
+                    const jsonMatch = textPart.match(/```json([\s\S]*?)```/) ||
+                                     textPart.match(/```([\s\S]*?)```/) ||
                                      textPart.match(/(\[[\s\S]*\])/);
                     const jsonStr = jsonMatch ? jsonMatch[1] : textPart.trim();
                     const articles = JSON.parse(jsonStr);
@@ -1091,7 +1095,7 @@
                 } catch(e) {
                     console.error('Live news fetch failed:', e);
                     setLiveNews(null);
-                    const key = localStorage.getItem('muang_gemini_key') || "";
+                    const key = localStorage.getItem('muang_groq_key') || "";
                     setNewsStatus(key ? 'error' : 'nokey');
                     setNewsErrMsg(e.message || '알 수 없는 오류');
                 }
@@ -1281,7 +1285,7 @@
                     </header>
 
                     {/* AI Daily Briefing — Gemini 키 있을 때만 */}
-                    {!!localStorage.getItem('muang_gemini_key') && (
+                    {!!localStorage.getItem('muang_groq_key') && (
                     <div className="bg-gradient-to-r from-blue-50 to-slate-50 border-b border-slate-200 py-6">
                         <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-start lg:items-center gap-5">
                             <div className="bg-blue-700 p-3.5 rounded-xl shadow-[3px_3px_0px_#facc15] shrink-0 text-white flex justify-center items-center">
@@ -1324,7 +1328,7 @@
                                 ) : newsStatus === 'nokey' ? (
                                     <div className="flex items-center gap-2">
                                         <span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
-                                        <span className="text-xs font-bold text-rose-600">Gemini API 키 미설정 — 내 자산 탭 설정에서 입력해주세요</span>
+                                        <span className="text-xs font-bold text-rose-600">Groq API 키 미설정 — 내 자산 탭 설정에서 입력해 주세요</span>
                                     </div>
                                 ) : newsStatus === 'error' ? (
                                     <div className="flex flex-col gap-1">
@@ -1744,7 +1748,7 @@
                                     </div>
                                     <div>
                                         <h3 className="font-black text-white text-lg">AI 포트폴리오 진단</h3>
-                                        <p className="text-indigo-300 text-xs font-medium">Muang AI · Powered by Gemini</p>
+                                        <p className="text-indigo-300 text-xs font-medium">Muang AI · Powered by Groq</p>
                                     </div>
                                 </div>
                                 <div className="flex-1 space-y-2.5 mb-6">
@@ -1766,9 +1770,9 @@
                                 >
                                     <Icon name="Sparkles" className="w-5 h-5 text-indigo-600"/> AI 진단 시작하기
                                 </button>
-                                {!localStorage.getItem('muang_gemini_key') && (
+                                {!localStorage.getItem('muang_groq_key') && (
                                     <p className="text-center text-indigo-400 text-[11px] font-medium mt-3">
-                                        ⚙️ 설정에서 Gemini API 키를 먼저 입력해 주세요
+                                        ⚙️ 설정에서 Groq API 키를 먼저 입력해 주세요
                                     </p>
                                 )}
                             </div>
