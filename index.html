@@ -1009,6 +1009,27 @@
             const [weather, setWeather] = useState({ temp: '로딩중...', condition: '' });
             const [tickerIndex, setTickerIndex] = useState(0);
             const [locationName, setLocationName] = useState('위치 파악중...');
+            const [liveIndices, setLiveIndices] = useState({});
+
+            // Yahoo Finance → allorigins CORS 프록시로 지수 직접 fetch
+            useEffect(() => {
+                const symbols = { 'S&P 500': '%5EGSPC', 'NASDAQ': '%5EIXIC', 'VIX': '%5EVIX', 'KOSPI': '%5EKS11' };
+                Object.entries(symbols).forEach(([name, sym]) => {
+                    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1d`;
+                    const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+                    fetch(proxy)
+                        .then(r => r.json())
+                        .then(data => {
+                            const meta = data?.chart?.result?.[0]?.meta;
+                            if (!meta) return;
+                            const price = meta.regularMarketPrice;
+                            const prev  = meta.chartPreviousClose || meta.previousClose || price;
+                            const change = prev > 0 ? ((price - prev) / prev * 100) : 0;
+                            setLiveIndices(prev => ({ ...prev, [name]: { price, change: parseFloat(change.toFixed(2)) } }));
+                        })
+                        .catch(() => {});
+                });
+            }, []);
 
             // ── Live news state ──────────────────────────────────────────────
             const [mineNews,   setMineNews]   = useState(null);
@@ -1058,32 +1079,35 @@
             const schema = '{"sector":"섹터명","subtitle":"English","icon":"Globe","color":"text-slate-700","source":"outlet","date":"YYYY-MM-DD","title":"한국어 제목","summary":"한국어 2-3문장 요약","keys":["TICKER"]}';
 
             const fetchMineNews = useCallback(async (force = false) => {
+                const holdingsList = userHoldings.join(', ');
+                // 캐시 키에 보유종목 해시 포함 → 종목 바뀌면 자동 무효화
+                const holdingsHash = holdingsList.split('').reduce((a,c)=>a+c.charCodeAt(0),0).toString(36);
                 if (!force) {
                     try {
                         const c = JSON.parse(localStorage.getItem(CACHE_MINE) || 'null');
-                        if (c?.date === today && Array.isArray(c.articles) && c.articles.length > 0) {
+                        if (c?.date === today && c?.hash === holdingsHash && Array.isArray(c.articles) && c.articles.length > 0) {
                             setMineNews(c.articles); setNewsUpdatedAt(c.fetchedAt); setNewsStatus('done'); return;
                         }
                     } catch(e) {}
                 }
                 setNewsStatus('loading');
-                const holdingsList = userHoldings.join(', ');
                 const prompt = `You are a Korean financial news analyst. Today is ${today}.
 The user's portfolio holdings: ${holdingsList}
 
-Generate 8-10 news items about these SPECIFIC holdings. For each holding, create 1 relevant news item based on your training knowledge about that company/asset.
+Generate 8-10 news items about these SPECIFIC holdings. For each holding, create 1 relevant news item based on your knowledge about that company/asset.
 Rules:
-- Each item must be directly about one of the user's holdings
-- Include 1-2 macro items with keys:["MACRO"] about general market conditions
-- title and summary MUST be in Korean
-- date should be within last 7 days from today
+- Each item MUST be directly about one of: ${holdingsList}
+- Include 1-2 macro items with keys:["MACRO"] about current global market sentiment
+- title and summary MUST be in Korean (natural, fluent Korean)
+- date must be within last 7 days from ${today}
 - icon must be one of: TrendingUp, TrendingDown, Globe, Cpu, DollarSign, BarChart3, Shield, Zap, Activity
+- DO NOT invent URLs - omit the url field entirely
 - Return ONLY a valid JSON array, no markdown, no explanation
 Schema for each item: ${schema}`;
                 try {
                     const articles = await groqFetch(prompt);
                     const fetchedAt = new Date().toISOString();
-                    localStorage.setItem(CACHE_MINE, JSON.stringify({ date: today, fetchedAt, articles }));
+                    localStorage.setItem(CACHE_MINE, JSON.stringify({ date: today, hash: holdingsHash, fetchedAt, articles }));
                     setMineNews(articles); setNewsUpdatedAt(fetchedAt); setNewsStatus('done');
                 } catch(e) {
                     setMineNews(null);
@@ -1103,21 +1127,27 @@ Schema for each item: ${schema}`;
                 }
                 setNewsStatus('loading');
                 const prompt = `You are a Korean global financial news analyst. Today is ${today}.
-Generate 10 major global news items covering these categories:
-1. US-China/US-Iran/Middle East geopolitics & war risks (2 items)
-2. Federal Reserve, interest rates, inflation (1 item)
-3. US tariffs, trade war, Trump policy (2 items)  
-4. Major stock market moves (S&P500, NASDAQ, crypto) (2 items)
-5. Commodities: oil, gold (1 item)
-6. Korea/Asia markets (1 item)
-7. Major tech or macro shock (1 item)
+
+Based on your most recent knowledge, generate 10 significant global financial & geopolitical news items that are actually happening around ${today}.
+
+Cover a diverse mix of whatever is most newsworthy RIGHT NOW:
+- Geopolitical conflicts, tensions, wars if any are ongoing
+- Central bank decisions (Fed, ECB, BOJ, BOK)
+- Major market moves, crashes, rallies
+- Trade disputes, sanctions, tariffs
+- Political events affecting markets
+- Commodity shocks (oil, gold, semiconductors)
+- Major corporate events (earnings, bankruptcies, mergers)
+- Climate/disaster events with economic impact
+- Whatever else is most significant globally right now
 
 Rules:
-- All items must be about real, significant global events you know about
-- title and summary MUST be in Korean
-- date should be within last 14 days from today
-- keys should be ["MACRO"] or ["GEOPOLITICS"] for all items
+- Choose topics based on what is ACTUALLY significant as of ${today}, not a fixed list
+- title and summary MUST be in Korean (natural, fluent)
+- date must be within last 14 days from ${today}
+- keys should be ["MACRO"] or ["GEOPOLITICS"] or ["MARKET"] as appropriate
 - icon: Globe, Shield, DollarSign, TrendingDown, TrendingUp, Zap, Activity, BarChart3
+- DO NOT invent URLs - omit the url field entirely
 - Return ONLY a valid JSON array, no markdown, no explanation
 Schema for each item: ${schema}`;
                 try {
@@ -1214,24 +1244,24 @@ Schema for each item: ${schema}`;
                 const exChangeStr = exChangeNum > 0 ? `+${exChangeNum.toFixed(2)}%` : (exChangeNum < 0 ? `${exChangeNum.toFixed(2)}%` : '0.00%');
                 const exPtsStr = exChangeNum !== 0 ? `${(marketData.exchangeRate * Math.abs(exChangeNum) / 100).toFixed(1)}` : '0.00';
                 const exRateEntry = { name:"USD/KRW", value:exRateStr, todayPct:exChangeStr, todayPts:exPtsStr };
-                // 구글 시트에서 받은 인덱스 데이터가 있으면 우선 사용
-                const idx = marketData.indices || {};
+                // 우선순위: 직접 Yahoo fetch > GAS > static
+                const gasIdx = marketData.indices || {};
                 const fmt = (name, staticIdx) => {
-                    const live = idx[name];
+                    const live = liveIndices[name] || gasIdx[name];
                     if (!live) return staticIdx;
                     const ch = live.change || 0;
                     const chStr = (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%';
-                    const pts = live.price ? (live.price * Math.abs(ch) / 100).toFixed(1) : '—';
+                    const pts = live.price ? (live.price * Math.abs(ch) / 100).toFixed(2) : '—';
                     return { ...staticIdx, value: live.price?.toLocaleString(undefined,{maximumFractionDigits:2}) || staticIdx.value, todayPct: chStr, todayPts: pts };
                 };
                 return [
-                    fmt('S&P 500',    MARKET_INDICES_STATIC[0]),
-                    fmt('NASDAQ',     MARKET_INDICES_STATIC[1]),
+                    fmt('S&P 500', MARKET_INDICES_STATIC[0]),
+                    fmt('NASDAQ',  MARKET_INDICES_STATIC[1]),
                     exRateEntry,
-                    fmt('KOSPI',      MARKET_INDICES_STATIC[2]),
-                    fmt('VIX',        MARKET_INDICES_STATIC[5]),
+                    fmt('KOSPI',   MARKET_INDICES_STATIC[2]),
+                    fmt('VIX',     MARKET_INDICES_STATIC[5]),
                 ];
-            }, [marketData]);
+            }, [marketData, liveIndices]);
 
             const todayInsight = useMemo(() => {
                 if (!holdings || !marketData?.prices) return "데이터를 분석 중입니다...";
