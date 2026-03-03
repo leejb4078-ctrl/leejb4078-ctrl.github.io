@@ -1087,7 +1087,7 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
                     body: JSON.stringify({
-                        model: 'llama3-70b-8192',
+                        model: 'llama-3.3-70b-versatile',
                         messages: [
                             { role: 'system', content: 'You are a financial news JSON generator. Always respond with a valid JSON array only. No markdown, no explanation, no extra text. Ensure all strings are properly escaped.' },
                             { role: 'user', content: promptText }
