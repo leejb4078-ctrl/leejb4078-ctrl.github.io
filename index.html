@@ -285,9 +285,12 @@
             const [inputData, setInputData] = useState("");
             const [status, setStatus] = useState("");
             const [geminiInput, setGeminiInput] = useState(() => localStorage.getItem('muang_groq_key') || "");
+            const [savedKey, setSavedKey] = useState(() => localStorage.getItem('muang_groq_key') || "");
             const saveGeminiKey = () => {
-                localStorage.setItem('muang_groq_key', geminiInput.trim());
-                setStatus("Gemini API 키 저장 완료!");
+                const trimmed = geminiInput.trim();
+                localStorage.setItem('muang_groq_key', trimmed);
+                setSavedKey(trimmed);
+                setStatus("Groq API 키 저장 완료! ✓");
                 setTimeout(() => { setStatus(""); onClose(); }, 1200);
             };
 
@@ -350,16 +353,16 @@
                                 <div className="space-y-4">
                                     <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 text-xs text-indigo-800 font-bold flex items-start gap-2">
                                         <Icon name="Sparkles" className="shrink-0 text-indigo-600 mt-0.5"/>
-                                        <span>Gemini API 키를 입력하면 <strong>AI 뉴스 새로고침</strong>과 <strong>AI 포트폴리오 진단</strong>이 작동합니다.<br/><span className="font-normal text-indigo-600 mt-1 block">aistudio.google.com → Get API key (무료)</span></span>
+                                        <span>Groq API 키를 입력하면 <strong>AI 뉴스 새로고침</strong>과 <strong>AI 포트폴리오 진단</strong>이 작동합니다.<br/><span className="font-normal text-orange-600 mt-1 block">console.groq.com → API Keys → Create API key (완전 무료)</span></span>
                                     </div>
                                     <div className="space-y-2">
-                                        <label className="text-sm font-bold text-slate-700">Gemini API Key</label>
+                                        <label className="text-sm font-bold text-slate-700">Groq API Key</label>
                                         <input type="password" value={geminiInput} onChange={e=>setGeminiInput(e.target.value)}
                                             placeholder="AIza..."
                                             className="w-full p-3 border border-slate-200 rounded-xl text-sm font-mono focus:ring-2 focus:ring-indigo-500 outline-none"/>
                                         <p className="text-[10px] text-slate-400">키는 기기 내 로컬에만 저장되며 외부로 전송되지 않습니다.</p>
                                     </div>
-                                    {geminiInput && localStorage.getItem('muang_groq_key') === geminiInput && (
+                                    {geminiInput && savedKey === geminiInput && (
                                         <div className="flex items-center gap-2 text-emerald-700 text-xs font-bold bg-emerald-50 border border-emerald-100 rounded-xl p-3">
                                             <span className="w-2 h-2 bg-emerald-500 rounded-full inline-block"></span> 현재 저장된 키와 동일합니다
                                         </div>
@@ -1146,6 +1149,7 @@ Schema for each item: ${schema}`;
             // Fallback to static news if live fetch failed or still loading
             const displayNews = useMemo(() => {
                 const liveNews = newsFilter === 'mine' ? mineNews : globalNews;
+                const liveNews = newsFilter === 'mine' ? mineNews : globalNews;
                 if (liveNews && liveNews.length > 0) return liveNews;
                 // Static fallback: pick relevant from NEWS_DB
                 let userAssets = [];
@@ -1171,7 +1175,7 @@ Schema for each item: ${schema}`;
                     i++;
                 }
                 return matched;
-            }, [liveNews, holdings]);
+            }, [mineNews, globalNews, newsFilter, holdings]);
 
             // ── Weather ──────────────────────────────────────────────────────
             useEffect(() => {
@@ -1371,7 +1375,7 @@ Schema for each item: ${schema}`;
                                         <div className="animate-spin rounded-full h-4 w-4 border-2 border-blue-600 border-t-transparent"></div>
                                         <span className="text-xs font-bold">AI가 최신 뉴스를 검색하는 중…</span>
                                     </div>
-                                ) : newsStatus === 'done' && liveNews ? (
+                                ) : newsStatus === 'done' && (newsFilter==='mine' ? mineNews : globalNews) ? (
                                     <div className="flex items-center gap-2">
                                         <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
                                         <span className="text-xs font-bold text-green-700">AI 라이브 뉴스</span>
@@ -1839,7 +1843,7 @@ Schema for each item: ${schema}`;
                                     <h3 className="font-black text-slate-800 text-xl flex items-center gap-2">
                                         <Icon name="TrendingUp" className="text-blue-600 w-6 h-6"/> 총자산 히스토리
                                     </h3>
-                                    <p className="text-xs text-slate-400 mt-1">앱 접속 시 자동 스냅샷 · 실제 데이터</p>
+                                    <p className="text-xs text-slate-400 mt-1">앱 접속 시 자동 스냅샷 · 구글 시트 영구 보관</p>
                                 </div>
                                 <div className="flex items-center gap-3">
                                     {filteredHistory.length >= 2 && (
@@ -1887,7 +1891,7 @@ Schema for each item: ${schema}`;
                             )}
                         </div>
                         <div className="px-6 pb-4 text-[10px] text-slate-400 text-center">
-                            📌 앱 접속 시 자동 저장 · 최근 365일 보관
+                            📌 앱 접속 시 자동 저장 · 구글 시트에 영구 보관
                         </div>
                     </div>
 
