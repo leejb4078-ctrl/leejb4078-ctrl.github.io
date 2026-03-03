@@ -1008,15 +1008,16 @@
             const [locationName, setLocationName] = useState('위치 파악중...');
 
             // ── Live news state ──────────────────────────────────────────────
-            const [liveNews, setLiveNews] = useState(null);       // fetched articles array
-            const [newsStatus, setNewsStatus] = useState('idle'); // 'idle'|'loading'|'done'|'error'
+            const [mineNews,   setMineNews]   = useState(null);
+            const [globalNews, setGlobalNews] = useState(null);
+            const [newsStatus, setNewsStatus] = useState('idle');
             const [newsUpdatedAt, setNewsUpdatedAt] = useState(null);
-            const [newsFilter, setNewsFilter] = useState('all'); // 'all' | 'mine'
+            const [newsFilter, setNewsFilter] = useState('mine');
             const [newsErrMsg, setNewsErrMsg] = useState('');
             const today = new Date().toISOString().split('T')[0];
-            const CACHE_KEY = 'muang_live_news_v1';
+            const CACHE_MINE   = 'muang_news_mine_v2';
+            const CACHE_GLOBAL = 'muang_news_global_v2';
 
-            // Build list of user's top holdings for the API prompt
             const userHoldings = useMemo(() => {
                 let assets = [];
                 ['usStock','krStock','crypto','others'].forEach(cat => {
@@ -1028,84 +1029,123 @@
                 return [...new Set(assets)].slice(0, 14);
             }, [holdings]);
 
-            const fetchLiveNews = useCallback(async (force = false) => {
-                // Check cache first (skip if force-refresh)
+            const groqFetch = useCallback(async (promptText) => {
+                const apiKey = localStorage.getItem('muang_groq_key') || "";
+                if (!apiKey) throw new Error('NOKEY');
+                const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                    body: JSON.stringify({
+                        model: 'llama-3.3-70b-versatile',
+                        messages: [{ role: 'user', content: promptText }],
+                        max_tokens: 2048,
+                        temperature: 0.7,
+                    })
+                });
+                if (!res.ok) { const e = await res.text(); throw new Error(`HTTP ${res.status}: ${e}`); }
+                const data = await res.json();
+                const text = data.choices?.[0]?.message?.content || "";
+                if (!text) throw new Error('Empty response');
+                const m = text.match(/```json([\s\S]*?)```/) || text.match(/```([\s\S]*?)```/) || text.match(/(\[[\s\S]*\])/);
+                const arr = JSON.parse(m ? m[1] : text.trim());
+                if (!Array.isArray(arr) || arr.length === 0) throw new Error('Empty array');
+                return arr;
+            }, []);
+
+            const schema = '{"sector":"섹터명","subtitle":"English","icon":"Globe","color":"text-slate-700","source":"outlet","date":"YYYY-MM-DD","title":"한국어 제목","summary":"한국어 2-3문장 요약","keys":["TICKER"]}';
+
+            const fetchMineNews = useCallback(async (force = false) => {
                 if (!force) {
                     try {
-                        const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
-                        if (cached?.date === today && Array.isArray(cached.articles) && cached.articles.length > 0) {
-                            setLiveNews(cached.articles);
-                            setNewsUpdatedAt(cached.fetchedAt);
-                            setNewsStatus('done');
-                            return;
+                        const c = JSON.parse(localStorage.getItem(CACHE_MINE) || 'null');
+                        if (c?.date === today && Array.isArray(c.articles) && c.articles.length > 0) {
+                            setMineNews(c.articles); setNewsUpdatedAt(c.fetchedAt); setNewsStatus('done'); return;
                         }
                     } catch(e) {}
                 }
-
                 setNewsStatus('loading');
-                const apiKey = localStorage.getItem('muang_groq_key') || "";
-                if (!apiKey) { setNewsStatus('nokey'); return; }
-
                 const holdingsList = userHoldings.join(', ');
-                const schemaExample = '[{"sector":"섹터명(Korean)","subtitle":"English","icon":"Globe","color":"text-slate-700","source":"outlet","date":"YYYY-MM-DD","title":"Korean headline","summary":"Korean 2-3 sentences","url":"https://real-url.com","keys":["TICKER"]}]';
-                const promptText = "You are a financial news analyst. The user holds: " + holdingsList + ".\n\n"
-                    + "Search the web for the LATEST news (within last 7 days) for EACH of these specific assets. Also include 2 macro/global market news.\n\n"
-                    + "Return ONLY a JSON array (NO markdown, NO backticks, NO explanation) with 8-10 items. Schema: " + schemaExample + "\n\n"
-                    + "Rules:\n"
-                    + "- Cover the user's holdings first: " + holdingsList + "\n"
-                    + "- Always include 1-2 macro items with keys:[\"MACRO\"]\n"
-                    + "- Today is " + today + " — date field must be accurate\n"
-                    + "- title and summary MUST be in Korean\n"
-                    + "- Return ONLY the JSON array. No other text.";
+                const prompt = `You are a Korean financial news analyst. Today is ${today}.
+The user's portfolio holdings: ${holdingsList}
 
+Generate 8-10 news items about these SPECIFIC holdings. For each holding, create 1 relevant news item based on your training knowledge about that company/asset.
+Rules:
+- Each item must be directly about one of the user's holdings
+- Include 1-2 macro items with keys:["MACRO"] about general market conditions
+- title and summary MUST be in Korean
+- date should be within last 7 days from today
+- icon must be one of: TrendingUp, TrendingDown, Globe, Cpu, DollarSign, BarChart3, Shield, Zap, Activity
+- Return ONLY a valid JSON array, no markdown, no explanation
+Schema for each item: ${schema}`;
                 try {
-                    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                        body: JSON.stringify({
-                            model: 'llama-3.3-70b-versatile',
-                            messages: [{ role: 'user', content: promptText }],
-                            max_tokens: 2048,
-                            temperature: 0.7,
-                        })
-                    });
-
-                    if (!res.ok) {
-                        const errBody = await res.text();
-                        throw new Error(`HTTP ${res.status}: ${errBody}`);
-                    }
-                    const data = await res.json();
-                    const textPart = data.choices?.[0]?.message?.content || "";
-                    if (!textPart) throw new Error('No text in response');
-
-                    // JSON 블록 추출
-                    const jsonMatch = textPart.match(/```json([\s\S]*?)```/) ||
-                                     textPart.match(/```([\s\S]*?)```/) ||
-                                     textPart.match(/(\[[\s\S]*\])/);
-                    const jsonStr = jsonMatch ? jsonMatch[1] : textPart.trim();
-                    const articles = JSON.parse(jsonStr);
-
-                    if (!Array.isArray(articles) || articles.length === 0) throw new Error('Empty articles');
-
+                    const articles = await groqFetch(prompt);
                     const fetchedAt = new Date().toISOString();
-                    localStorage.setItem(CACHE_KEY, JSON.stringify({ date: today, fetchedAt, articles }));
-                    setLiveNews(articles);
-                    setNewsUpdatedAt(fetchedAt);
-                    setNewsStatus('done');
+                    localStorage.setItem(CACHE_MINE, JSON.stringify({ date: today, fetchedAt, articles }));
+                    setMineNews(articles); setNewsUpdatedAt(fetchedAt); setNewsStatus('done');
                 } catch(e) {
-                    console.error('Live news fetch failed:', e);
-                    setLiveNews(null);
-                    const key = localStorage.getItem('muang_groq_key') || "";
-                    setNewsStatus(key ? 'error' : 'nokey');
-                    setNewsErrMsg(e.message || '알 수 없는 오류');
+                    setMineNews(null);
+                    setNewsStatus(e.message === 'NOKEY' ? 'nokey' : 'error');
+                    setNewsErrMsg(e.message);
                 }
-            }, [userHoldings, today]);
+            }, [userHoldings, today, groqFetch]);
 
-            // Auto-fetch on mount
-            useEffect(() => { fetchLiveNews(false); }, [fetchLiveNews]);
+            const fetchGlobalNews = useCallback(async (force = false) => {
+                if (!force) {
+                    try {
+                        const c = JSON.parse(localStorage.getItem(CACHE_GLOBAL) || 'null');
+                        if (c?.date === today && Array.isArray(c.articles) && c.articles.length > 0) {
+                            setGlobalNews(c.articles); setNewsUpdatedAt(c.fetchedAt); setNewsStatus('done'); return;
+                        }
+                    } catch(e) {}
+                }
+                setNewsStatus('loading');
+                const prompt = `You are a Korean global financial news analyst. Today is ${today}.
+Generate 10 major global news items covering these categories:
+1. US-China/US-Iran/Middle East geopolitics & war risks (2 items)
+2. Federal Reserve, interest rates, inflation (1 item)
+3. US tariffs, trade war, Trump policy (2 items)  
+4. Major stock market moves (S&P500, NASDAQ, crypto) (2 items)
+5. Commodities: oil, gold (1 item)
+6. Korea/Asia markets (1 item)
+7. Major tech or macro shock (1 item)
+
+Rules:
+- All items must be about real, significant global events you know about
+- title and summary MUST be in Korean
+- date should be within last 14 days from today
+- keys should be ["MACRO"] or ["GEOPOLITICS"] for all items
+- icon: Globe, Shield, DollarSign, TrendingDown, TrendingUp, Zap, Activity, BarChart3
+- Return ONLY a valid JSON array, no markdown, no explanation
+Schema for each item: ${schema}`;
+                try {
+                    const articles = await groqFetch(prompt);
+                    const fetchedAt = new Date().toISOString();
+                    localStorage.setItem(CACHE_GLOBAL, JSON.stringify({ date: today, fetchedAt, articles }));
+                    setGlobalNews(articles); setNewsUpdatedAt(fetchedAt); setNewsStatus('done');
+                } catch(e) {
+                    setGlobalNews(null);
+                    setNewsStatus(e.message === 'NOKEY' ? 'nokey' : 'error');
+                    setNewsErrMsg(e.message);
+                }
+            }, [today, groqFetch]);
+
+            const fetchLiveNews = useCallback((force = false) => {
+                if (newsFilter === 'mine') fetchMineNews(force);
+                else fetchGlobalNews(force);
+            }, [newsFilter, fetchMineNews, fetchGlobalNews]);
+
+            // 탭 전환 시 해당 캐시 체크 후 fetch
+            useEffect(() => {
+                if (newsFilter === 'mine') fetchMineNews(false);
+                else fetchGlobalNews(false);
+            }, [newsFilter]);
+
+            // 첫 로드
+            useEffect(() => { fetchMineNews(false); }, []);
 
             // Fallback to static news if live fetch failed or still loading
             const displayNews = useMemo(() => {
+                const liveNews = newsFilter === 'mine' ? mineNews : globalNews;
                 if (liveNews && liveNews.length > 0) return liveNews;
                 // Static fallback: pick relevant from NEWS_DB
                 let userAssets = [];
@@ -1168,11 +1208,27 @@
             const marketIndices = useMemo(() => {
                 const exRateStr = marketData.exchangeRate.toLocaleString();
                 const exChangeNum = marketData.exchangeChange || 0;
-                const exChangeStr = exChangeNum > 0 ? `+${exChangeNum}%` : (exChangeNum < 0 ? `${exChangeNum}%` : '0.00%');
-                const exPtsStr = exChangeNum !== 0 ? `${(marketData.exchangeRate * exChangeNum / 100).toFixed(1)}` : '0.00';
-                const exRateEntry = { name:"환율", value:exRateStr, todayPct:exChangeStr, todayPts:exPtsStr, weekPct:"+0.50%", weekPts:"+7.00" };
-                return [...MARKET_INDICES_STATIC.slice(0,3), exRateEntry, ...MARKET_INDICES_STATIC.slice(3)];
-            }, [marketData.exchangeRate, marketData.exchangeChange]);
+                const exChangeStr = exChangeNum > 0 ? `+${exChangeNum.toFixed(2)}%` : (exChangeNum < 0 ? `${exChangeNum.toFixed(2)}%` : '0.00%');
+                const exPtsStr = exChangeNum !== 0 ? `${(marketData.exchangeRate * Math.abs(exChangeNum) / 100).toFixed(1)}` : '0.00';
+                const exRateEntry = { name:"USD/KRW", value:exRateStr, todayPct:exChangeStr, todayPts:exPtsStr };
+                // 구글 시트에서 받은 인덱스 데이터가 있으면 우선 사용
+                const idx = marketData.indices || {};
+                const fmt = (name, staticIdx) => {
+                    const live = idx[name];
+                    if (!live) return staticIdx;
+                    const ch = live.change || 0;
+                    const chStr = (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%';
+                    const pts = live.price ? (live.price * Math.abs(ch) / 100).toFixed(1) : '—';
+                    return { ...staticIdx, value: live.price?.toLocaleString(undefined,{maximumFractionDigits:2}) || staticIdx.value, todayPct: chStr, todayPts: pts };
+                };
+                return [
+                    fmt('S&P 500',    MARKET_INDICES_STATIC[0]),
+                    fmt('NASDAQ',     MARKET_INDICES_STATIC[1]),
+                    exRateEntry,
+                    fmt('KOSPI',      MARKET_INDICES_STATIC[2]),
+                    fmt('VIX',        MARKET_INDICES_STATIC[5]),
+                ];
+            }, [marketData]);
 
             const todayInsight = useMemo(() => {
                 if (!holdings || !marketData?.prices) return "데이터를 분석 중입니다...";
@@ -1348,8 +1404,8 @@
                             </div>
                             <div className="flex items-center gap-2">
                                 <div className="flex bg-slate-800 rounded-xl p-0.5 gap-0.5 border border-slate-700">
-                                    <button onClick={()=>setNewsFilter('all')} className={`px-3 py-1.5 text-[10px] font-black rounded-lg transition-all ${newsFilter==='all'?'bg-white text-slate-900':'text-slate-400 hover:text-white'}`}>전체</button>
-                                    <button onClick={()=>setNewsFilter('mine')} className={`px-3 py-1.5 text-[10px] font-black rounded-lg transition-all ${newsFilter==='mine'?'bg-white text-slate-900':'text-slate-400 hover:text-white'}`}>내 종목</button>
+                                    <button onClick={()=>setNewsFilter('mine')} className={`px-3 py-1.5 text-[10px] font-black rounded-lg transition-all ${newsFilter==='mine'?'bg-white text-slate-900':'text-slate-400 hover:text-white'}`}>📊 내 종목</button>
+                                    <button onClick={()=>setNewsFilter('all')} className={`px-3 py-1.5 text-[10px] font-black rounded-lg transition-all ${newsFilter==='all'?'bg-white text-slate-900':'text-slate-400 hover:text-white'}`}>🌍 글로벌</button>
                                 </div>
                             <button
                                 onClick={() => fetchLiveNews(true)}
@@ -1379,11 +1435,7 @@
                         )}
 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-12">
-                            {displayNews.filter(sec => {
-                                if(newsFilter==='all') return true;
-                                if(sec.keys?.includes('MACRO')||sec.keys?.includes('GEOPOLITICS')) return true;
-                                return sec.keys?.some(k => userHoldings.some(h => h.toUpperCase().includes(k.toUpperCase())||k.toUpperCase().includes(h.toUpperCase())));
-                            }).map((sec, idx) => {
+                            {displayNews.map((sec, idx) => {
                                 const dateStr = sec.date ? new Date(sec.date).toLocaleDateString('ko-KR', {month:'short', day:'numeric'}) : '';
                                 const daysAgo = sec.date ? Math.floor((new Date() - new Date(sec.date)) / 86400000) : null;
                                 const freshness = daysAgo !== null ? (daysAgo === 0 ? '오늘' : daysAgo <= 3 ? `${daysAgo}일 전` : daysAgo <= 14 ? `${daysAgo}일 전` : `${dateStr}`) : '';
@@ -1406,8 +1458,8 @@
                                             <h4 className="font-black text-slate-900 text-base md:text-[17px] mb-3 leading-snug group-hover:text-blue-700 transition-colors">{sec.title}</h4>
                                             <p className="text-sm text-slate-600 mb-5 line-clamp-3 leading-relaxed">{sec.summary}</p>
                                             <div className="mt-auto pt-2">
-                                                <a href={sec.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 text-[11px] font-bold rounded-lg hover:bg-blue-50 hover:text-blue-700 transition-colors w-fit">
-                                                    기사 원문 보기 <Icon name="ArrowUpRight" className="w-3.5 h-3.5"/>
+                                                <a href={`https://news.google.com/search?q=${encodeURIComponent(sec.title)}&hl=ko&gl=KR`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 text-[11px] font-bold rounded-lg hover:bg-blue-50 hover:text-blue-700 transition-colors w-fit">
+                                                    관련 기사 검색 <Icon name="ArrowUpRight" className="w-3.5 h-3.5"/>
                                                 </a>
                                             </div>
                                         </div>
@@ -2303,6 +2355,15 @@
         };
 
         // ─── 11. SUPER APP CONTAINER ──────────────────────────────────────────────
+        // ── Gemini→Groq 키 마이그레이션 (1회) ──────────────────────────────────
+        (() => {
+            const old = localStorage.getItem('muang_gemini_key');
+            if (old && !localStorage.getItem('muang_groq_key')) {
+                localStorage.setItem('muang_groq_key', old);
+            }
+            if (old) localStorage.removeItem('muang_gemini_key');
+        })();
+
         const SuperApp = () => {
             const [activeTab, setActiveTab] = useState('assets');
             const [gasUrl, setGasUrl] = useState(() => localStorage.getItem('muang_gas_url') || "");
