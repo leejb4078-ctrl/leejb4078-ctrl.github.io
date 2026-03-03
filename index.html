@@ -1011,24 +1011,36 @@
             const [locationName, setLocationName] = useState('위치 파악중...');
             const [liveIndices, setLiveIndices] = useState({});
 
-            // Yahoo Finance → allorigins CORS 프록시로 지수 직접 fetch
+            // 지수 실시간 fetch — corsproxy.io 사용
             useEffect(() => {
-                const symbols = { 'S&P 500': '%5EGSPC', 'NASDAQ': '%5EIXIC', 'VIX': '%5EVIX', 'KOSPI': '%5EKS11' };
-                Object.entries(symbols).forEach(([name, sym]) => {
+                const symbols = {
+                    'S&P 500': '%5EGSPC',
+                    'NASDAQ':  '%5EIXIC',
+                    'VIX':     '%5EVIX',
+                    'KOSPI':   '%5EKS11'
+                };
+                const proxies = [
+                    (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+                    (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+                ];
+                const fetchIndex = async (name, sym) => {
                     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1d`;
-                    const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
-                    fetch(proxy)
-                        .then(r => r.json())
-                        .then(data => {
+                    for (const makeProxy of proxies) {
+                        try {
+                            const r = await fetch(makeProxy(url), { signal: AbortSignal.timeout(6000) });
+                            if (!r.ok) continue;
+                            const data = await r.json();
                             const meta = data?.chart?.result?.[0]?.meta;
-                            if (!meta) return;
+                            if (!meta?.regularMarketPrice) continue;
                             const price = meta.regularMarketPrice;
                             const prev  = meta.chartPreviousClose || meta.previousClose || price;
                             const change = prev > 0 ? ((price - prev) / prev * 100) : 0;
-                            setLiveIndices(prev => ({ ...prev, [name]: { price, change: parseFloat(change.toFixed(2)) } }));
-                        })
-                        .catch(() => {});
-                });
+                            setLiveIndices(p => ({ ...p, [name]: { price, change: parseFloat(change.toFixed(2)) } }));
+                            return;
+                        } catch(e) { continue; }
+                    }
+                };
+                Object.entries(symbols).forEach(([name, sym]) => fetchIndex(name, sym));
             }, []);
 
             // ── Live news state ──────────────────────────────────────────────
@@ -1053,6 +1065,21 @@
                 return [...new Set(assets)].slice(0, 14);
             }, [holdings]);
 
+            const cleanAndParseJSON = (raw) => {
+                // 1단계: 코드블록 제거
+                let s = raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+                // 2단계: [ ... ] 추출
+                const start = s.indexOf('['), end = s.lastIndexOf(']');
+                if (start !== -1 && end !== -1) s = s.slice(start, end + 1);
+                // 3단계: 제어문자 제거 (줄바꿈/탭 제외)
+                s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+                // 4단계: 후행 콤마 제거
+                s = s.replace(/,\s*([}\]])/g, '$1');
+                // 5단계: url 필드 통째로 제거 (hallucination 방지)
+                s = s.replace(/"url"\s*:\s*"[^"]*",?\s*/g, '');
+                return JSON.parse(s);
+            };
+
             const groqFetch = useCallback(async (promptText) => {
                 const apiKey = localStorage.getItem('muang_groq_key') || "";
                 if (!apiKey) throw new Error('NOKEY');
@@ -1060,18 +1087,20 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
                     body: JSON.stringify({
-                        model: 'llama-3.3-70b-versatile',
-                        messages: [{ role: 'user', content: promptText }],
-                        max_tokens: 2048,
-                        temperature: 0.7,
+                        model: 'llama3-70b-8192',
+                        messages: [
+                            { role: 'system', content: 'You are a financial news JSON generator. Always respond with a valid JSON array only. No markdown, no explanation, no extra text. Ensure all strings are properly escaped.' },
+                            { role: 'user', content: promptText }
+                        ],
+                        max_tokens: 3000,
+                        temperature: 0.4,
                     })
                 });
                 if (!res.ok) { const e = await res.text(); throw new Error(`HTTP ${res.status}: ${e}`); }
                 const data = await res.json();
                 const text = data.choices?.[0]?.message?.content || "";
                 if (!text) throw new Error('Empty response');
-                const m = text.match(/```json([\s\S]*?)```/) || text.match(/```([\s\S]*?)```/) || text.match(/(\[[\s\S]*\])/);
-                const arr = JSON.parse(m ? m[1] : text.trim());
+                const arr = cleanAndParseJSON(text);
                 if (!Array.isArray(arr) || arr.length === 0) throw new Error('Empty array');
                 return arr;
             }, []);
