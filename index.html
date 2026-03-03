@@ -1149,7 +1149,6 @@ Schema for each item: ${schema}`;
             // Fallback to static news if live fetch failed or still loading
             const displayNews = useMemo(() => {
                 const liveNews = newsFilter === 'mine' ? mineNews : globalNews;
-                const liveNews = newsFilter === 'mine' ? mineNews : globalNews;
                 if (liveNews && liveNews.length > 0) return liveNews;
                 // Static fallback: pick relevant from NEWS_DB
                 let userAssets = [];
