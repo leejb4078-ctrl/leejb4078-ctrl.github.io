@@ -1127,6 +1127,18 @@ ${assetSummaryText}
 
         const MarketPulse = ({ holdings, marketData }) => {
             const [currentTime, setCurrentTime] = useState(new Date());
+
+            // 보유 종목 목록 (fetchMineNews에서 사용)
+            const userHoldings = useMemo(() => {
+                let assets = [];
+                ['usStock','krStock','crypto','others'].forEach(cat => {
+                    if (holdings?.[cat]) holdings[cat].forEach(item => {
+                        if ((item.qty > 0) || (item.val > 0) || (item.avg > 0))
+                            assets.push(item.name);
+                    });
+                });
+                return [...new Set(assets)];
+            }, [holdings]);
             const [weather, setWeather] = useState({ temp: '로딩중...', condition: '' });
             const [tickerIndex, setTickerIndex] = useState(0);
             const [locationName, setLocationName] = useState('위치 파악중...');
