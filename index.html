@@ -1170,165 +1170,112 @@ ${assetSummaryText}
             const [newsStatus, setNewsStatus] = useState('idle');
             const [newsUpdatedAt, setNewsUpdatedAt] = useState(null);
             const [newsFilter, setNewsFilter] = useState('mine');
+            const [newsTickerFilter, setNewsTickerFilter] = useState('ALL');
+            const [readArticles, setReadArticles] = useState(() => {
+                try { return new Set(JSON.parse(localStorage.getItem('muang_read_news') || '[]')); }
+                catch(e) { return new Set(); }
+            });
+            const markRead = (id) => {
+                setReadArticles(prev => {
+                    const next = new Set(prev); next.add(id);
+                    localStorage.setItem('muang_read_news', JSON.stringify([...next].slice(-200)));
+                    return next;
+                });
+            };
             const [newsErrMsg, setNewsErrMsg] = useState('');
             const today = new Date().toISOString().split('T')[0];
-            const CACHE_MINE   = 'muang_news_mine_v6';
-            const CACHE_GLOBAL = 'muang_news_global_v6';
+            // ══════════════════════════════════════════════════════════════════
+            // NEWS ENGINE v2 — Groq 제거, Finnhub 직접 표시
+            // ══════════════════════════════════════════════════════════════════
+            const CACHE_MINE   = 'muang_news_mine_v9';
+            const CACHE_GLOBAL = 'muang_news_global_v9';
+            const FINNHUB_KEY  = 'd6jqsl9r01qkvh5r0qqgd6jqsl9r01qkvh5r0qr0';
 
-            const userHoldings = useMemo(() => {
-                let assets = [];
-                ['usStock','krStock','crypto','others'].forEach(cat => {
-                    if(holdings?.[cat]) holdings[cat].forEach(item => {
-                        if((item.qty && item.qty > 0) || (item.val && item.val > 0))
-                            assets.push(item.name);
-                    });
-                });
-                return [...new Set(assets)].slice(0, 14);
-            }, [holdings]);
-
-            const cleanAndParseJSON = (raw) => {
-                // 1단계: 코드블록 제거
-                let s = raw.replace(/```json\s*/g,'').replace(/```\s*/g,'').trim();
-                // 2단계: [ ... ] 추출
-                const start = s.indexOf('['), end = s.lastIndexOf(']');
-                if (start !== -1 && end !== -1) s = s.slice(start, end + 1);
-                // 3단계: 제어문자 제거 (줄바꿈/탭 제외)
-                s = s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
-                // 4단계: 후행 콤마 제거
-                s = s.replace(/,\s*([}\]])/g, '$1');
-                // 5단계: 속성명 작은따옴표 → 큰따옴표
-                s = s.replace(/'([^']+)'\s*:/g, '"$1":');
-                // 6단계: 값 작은따옴표 → 큰따옴표 (속성값)
-                s = s.replace(/:\s*'([^']*)'/g, ': "$1"');
-                // 7단계: 줄바꿈/탭을 공백으로
-                s = s.replace(/\n/g,' ').replace(/\t/g,' ');
-                // 8단계: 1차 파싱 시도
-                try { return JSON.parse(s); } catch(e1) {
-                    // 9단계: 각 객체를 개별 파싱 시도 (부분 복구)
-                    try {
-                        const items = [];
-                        const objRegex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
-                        let match;
-                        while ((match = objRegex.exec(s)) !== null) {
-                            try { items.push(JSON.parse(match[0])); } catch(e) {}
-                        }
-                        if (items.length > 0) return items;
-                    } catch(e2) {}
-                    throw e1;
-                }
+            // 구글 번역 API (무료, 키 불필요) — 제목만 번역
+            const translateTitle = async (text) => {
+                try {
+                    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q=' + encodeURIComponent(text);
+                    const r = await fetch(url, { signal: AbortSignal.timeout(4000) });
+                    const d = await r.json();
+                    return d?.[0]?.map(x => x?.[0]).filter(Boolean).join('') || text;
+                } catch(e) { return text; }
             };
 
-            // ── RSS 크롤링 헬퍼 ─────────────────────────────────────────────────────
-            // ── 구글 뉴스 RSS로 실제 기사 가져오기 ──────────────────────────────────
-            const fetchGoogleNewsRSS = async (query, lang) => {
-                const hl  = lang === 'ko' ? 'ko' : 'en';
-                const gl  = lang === 'ko' ? 'KR' : 'US';
-                const ceid = lang === 'ko' ? 'KR:ko' : 'US:en';
-                const rssUrl = 'https://news.google.com/rss/search?q=' + encodeURIComponent(query) + '&hl=' + hl + '&gl=' + gl + '&ceid=' + ceid;
-                const proxies = [
-                    'https://api.allorigins.win/raw?url=' + encodeURIComponent(rssUrl),
-                    'https://corsproxy.io/?' + encodeURIComponent(rssUrl),
-                ];
-                for (const proxyUrl of proxies) {
-                    try {
-                        const r = await fetch(proxyUrl, { signal: AbortSignal.timeout(7000) });
-                        if (!r.ok) continue;
-                        const text = await r.text();
-                        const parser = new DOMParser();
-                        const xml = parser.parseFromString(text, 'text/xml');
-                        const items = Array.from(xml.querySelectorAll('item'));
-                        const results = items.slice(0, 5).map(item => {
-                            // 구글뉴스 RSS link는 <link> 태그 대신 <guid> 또는 URL이 인코딩되어 있음
-                            const rawLink = item.querySelector('link')?.textContent?.trim()
-                                         || item.querySelector('guid')?.textContent?.trim() || '';
-                            // 실제 기사 URL 추출 (구글 리다이렉트 URL에서 실제 URL로)
-                            const srcEl = item.querySelector('source');
-                            const source = srcEl?.textContent?.trim() || '';
-                            const title = item.querySelector('title')?.textContent?.trim() || '';
-                            const pubDate = item.querySelector('pubDate')?.textContent?.trim() || '';
-                            const desc = item.querySelector('description')?.textContent?.replace(/<[^>]+>/g,'').trim().slice(0,250) || '';
-                            if (!title) return null;
-                            return { title, link: rawLink, source, date: pubDate, desc };
-                        }).filter(Boolean);
-                        if (results.length > 0) return results;
-                    } catch(e) { continue; }
-                }
-                return [];
-            };
-
-
-            const FINNHUB_KEY = 'd6jqsl9r01qkvh5r0qqgd6jqsl9r01qkvh5r0qr0';
-
-            // ── Finnhub 뉴스 fetch ────────────────────────────────────────────────────
+            // Finnhub 종목 뉴스
             const fetchFinnhub = async (symbol) => {
-                const to   = Math.floor(Date.now() / 1000);
-                const from = to - 60 * 60 * 24 * 7; // 7일
-                const url  = 'https://finnhub.io/api/v1/company-news?symbol=' + symbol + '&from=' + new Date(from*1000).toISOString().split('T')[0] + '&to=' + new Date(to*1000).toISOString().split('T')[0] + '&token=' + FINNHUB_KEY;
+                const toDate   = new Date().toISOString().split('T')[0];
+                const fromDate = new Date(Date.now() - 7*24*60*60*1000).toISOString().split('T')[0];
+                const url = 'https://finnhub.io/api/v1/company-news?symbol=' + symbol + '&from=' + fromDate + '&to=' + toDate + '&token=' + FINNHUB_KEY;
                 try {
                     const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
                     if (!r.ok) return [];
                     const data = await r.json();
                     if (!Array.isArray(data)) return [];
                     return data.slice(0, 4).map(a => ({
-                        ticker: symbol,
-                        title:  a.headline || '',
-                        source: a.source   || '',
-                        date:   new Date(a.datetime * 1000).toISOString().split('T')[0],
-                        link:   a.url      || '',
-                        desc:   a.summary  || '',
-                    })).filter(a => a.title && a.link);
+                        ticker:  symbol,
+                        titleEn: a.headline || '',
+                        title:   a.headline || '',
+                        summary: a.summary  || '',
+                        source:  a.source   || '',
+                        date:    new Date(a.datetime * 1000).toISOString().split('T')[0],
+                        url:     a.url      || '',
+                        image:   a.image    || '',
+                        keys:    [symbol],
+                        type:    'company',
+                    })).filter(a => a.titleEn && a.url);
                 } catch(e) { return []; }
             };
 
-            // ── Finnhub 글로벌 마켓 뉴스 ──────────────────────────────────────────────
-            const fetchFinnhubMarket = async (category) => {
-                const url = 'https://finnhub.io/api/v1/news?category=' + category + '&token=' + FINNHUB_KEY;
+            // Finnhub 감성분석
+            const fetchSentiment = async (symbol) => {
                 try {
+                    const url = 'https://finnhub.io/api/v1/news-sentiment?symbol=' + symbol + '&token=' + FINNHUB_KEY;
+                    const r = await fetch(url, { signal: AbortSignal.timeout(5000) });
+                    if (!r.ok) return null;
+                    const d = await r.json();
+                    if (!d?.sentiment) return null;
+                    const bull = d.sentiment.bullishPercent || 0;
+                    const bear = d.sentiment.bearishPercent || 0;
+                    return { bull: Math.round(bull*100), bear: Math.round(bear*100), score: bull > bear ? 'bullish' : bear > bull ? 'bearish' : 'neutral' };
+                } catch(e) { return null; }
+            };
+
+            // Finnhub 글로벌 마켓 뉴스
+            const fetchFinnhubMarket = async (category) => {
+                try {
+                    const url = 'https://finnhub.io/api/v1/news?category=' + category + '&minId=0&token=' + FINNHUB_KEY;
                     const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
                     if (!r.ok) return [];
                     const data = await r.json();
-                    if (!Array.isArray(data)) return [];
-                    return data.slice(0, 5).map(a => ({
-                        ticker: 'MACRO',
-                        title:  a.headline || '',
-                        source: a.source   || '',
-                        date:   new Date(a.datetime * 1000).toISOString().split('T')[0],
-                        link:   a.url      || '',
-                        desc:   a.summary  || '',
-                    })).filter(a => a.title && a.link);
+                    return (Array.isArray(data) ? data : []).slice(0, 6).map(a => ({
+                        ticker:  'GLOBAL',
+                        titleEn: a.headline || '',
+                        title:   a.headline || '',
+                        summary: a.summary  || '',
+                        source:  a.source   || '',
+                        date:    new Date(a.datetime * 1000).toISOString().split('T')[0],
+                        url:     a.url      || '',
+                        image:   a.image    || '',
+                        keys:    ['MACRO'],
+                        type:    category,
+                    })).filter(a => a.titleEn && a.url);
                 } catch(e) { return []; }
             };
 
-            const groqFetch = useCallback(async (promptText) => {
-                const apiKey = localStorage.getItem('muang_groq_key') || "";
-                if (!apiKey) throw new Error('NOKEY');
-                const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-                    body: JSON.stringify({
-                        model: 'llama-3.3-70b-versatile',
-                        messages: [
-                            { role: 'system', content: 'You are a financial news JSON generator. Always respond with a valid JSON array only. No markdown, no explanation, no extra text. Ensure all strings are properly escaped.' },
-                            { role: 'user', content: promptText }
-                        ],
-                        max_tokens: 3000,
-                        temperature: 0.4,
+            // 제목 번역 (병렬)
+            const translateArticles = async (articles) => {
+                const translated = await Promise.all(
+                    articles.map(async a => {
+                        const ko = await translateTitle(a.titleEn);
+                        return { ...a, title: ko };
                     })
-                });
-                if (!res.ok) { const e = await res.text(); throw new Error(`HTTP ${res.status}: ${e}`); }
-                const data = await res.json();
-                const text = data.choices?.[0]?.message?.content || "";
-                if (!text) throw new Error('Empty response');
-                const arr = cleanAndParseJSON(text);
-                if (!Array.isArray(arr) || arr.length === 0) throw new Error('Empty array');
-                return arr;
-            }, []);
+                );
+                return translated;
+            };
 
-            const schema = '{"sector":"섹터명","subtitle":"English","icon":"Globe","color":"text-slate-700","source":"outlet","date":"YYYY-MM-DD","title":"한국어 제목","summary":"한국어 2-3문장 요약","keys":["TICKER"]}';
-
+            // ── 내 종목 뉴스 fetch ──────────────────────────────────────────
             const fetchMineNews = useCallback(async (force = false) => {
-                const holdingsList = userHoldings.join(', ');
-                const holdingsHash = holdingsList.split('').reduce((a,c)=>a+c.charCodeAt(0),0).toString(36);
+                const holdingsHash = userHoldings.join(',').split('').reduce((a,c)=>a+c.charCodeAt(0),0).toString(36);
                 if (!force) {
                     try {
                         const c = JSON.parse(localStorage.getItem(CACHE_MINE) || 'null');
@@ -1338,52 +1285,78 @@ ${assetSummaryText}
                     } catch(e) {}
                 }
                 setNewsStatus('loading');
-                const apiKey = localStorage.getItem('muang_groq_key') || '';
-                if (!apiKey) { setNewsStatus('nokey'); return; }
                 try {
-                    // 종목 분류: 미국(USD) → Finnhub / 한국(KRW) → 구글뉴스RSS
-                    const usHoldings = []; const krHoldings = [];
+                    // 종목 분류
+                    const usTickers = [], krNames = [];
                     ['usStock','krStock','others','crypto'].forEach(cat => {
                         if (!holdings[cat]) return;
                         holdings[cat].forEach(item => {
-                            if (item.qty > 0 || item.val > 0) {
-                                if (item.type === 'USD') usHoldings.push(item.name);
-                                else if (item.type === 'KRW') krHoldings.push(item.name);
-                            }
+                            const has = (item.qty > 0) || (item.val > 0) || (item.avg > 0);
+                            if (!has) return;
+                            if (item.type === 'USD') usTickers.push(item.name);
+                            else krNames.push(item.name);
+                        });
+                    });
+                    // 분류 못된 종목 보완
+                    const known = new Set([...usTickers, ...krNames]);
+                    userHoldings.forEach(n => { if (!known.has(n)) usTickers.push(n); });
+
+                    // 병렬: 뉴스 + 감성 동시
+                    const uniqueUS = [...new Set(usTickers)].slice(0, 10);
+                    const uniqueKR = [...new Set(krNames)].slice(0, 6);
+
+                    const [newsResults, sentResults] = await Promise.all([
+                        Promise.all([
+                            ...uniqueUS.map(t => fetchFinnhub(t)),
+                            ...uniqueKR.map(n =>
+                                fetchFinnhub(n).then(rs => rs.length > 0 ? rs :
+                                    // Finnhub에 한국 종목 없으면 구글뉴스RSS 시도
+                                    fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent('https://news.google.com/rss/search?q=' + encodeURIComponent(n + ' 주가') + '&hl=ko&gl=KR&ceid=KR:ko'), { signal: AbortSignal.timeout(6000) })
+                                        .then(r => r.text()).then(text => {
+                                            const xml = new DOMParser().parseFromString(text, 'text/xml');
+                                            return Array.from(xml.querySelectorAll('item')).slice(0,3).map(item => ({
+                                                ticker: n, keys: [n], type: 'company',
+                                                titleEn: item.querySelector('title')?.textContent?.trim() || '',
+                                                title:   item.querySelector('title')?.textContent?.trim() || '',
+                                                summary: item.querySelector('description')?.textContent?.replace(/<[^>]+>/g,'').trim().slice(0,300) || '',
+                                                source:  item.querySelector('source')?.textContent?.trim() || 'Google News',
+                                                date:    new Date(item.querySelector('pubDate')?.textContent || Date.now()).toISOString().split('T')[0],
+                                                url:     item.querySelector('link')?.textContent?.trim() || '',
+                                            })).filter(a => a.title && a.url);
+                                        }).catch(() => [])
+                                )
+                            ),
+                        ]),
+                        Promise.all(uniqueUS.map(t => fetchSentiment(t))),
+                    ]);
+
+                    // 감성 맵
+                    const sentMap = {};
+                    uniqueUS.forEach((t, i) => { if (sentResults[i]) sentMap[t] = sentResults[i]; });
+
+                    // 기사 합치기 + 감성 주입
+                    let allArticles = [];
+                    newsResults.forEach(rs => {
+                        rs.forEach(a => {
+                            a.sentiment = sentMap[a.ticker] || null;
+                            allArticles.push(a);
                         });
                     });
 
-                    let allArticles = [];
-
-                    // 미국 종목: Finnhub (진짜 URL, 최신 기사)
-                    for (const ticker of usHoldings.slice(0, 6)) {
-                        const results = await fetchFinnhub(ticker);
-                        allArticles = allArticles.concat(results);
-                    }
-
-                    // 한국 종목: 구글뉴스 RSS
-                    for (const name of krHoldings.slice(0, 4)) {
-                        const results = await fetchGoogleNewsRSS(name + ' 주가 ETF', 'ko');
-                        results.slice(0,3).forEach(r => { r.ticker = name; allArticles.push(r); });
-                    }
-
                     if (allArticles.length === 0) throw new Error('기사 없음');
 
-                    const snippets = allArticles.slice(0,24).map((a,i) =>
-                        '[' + (i+1) + '] 종목:' + (a.ticker||'') + ' | 제목: ' + a.title + ' | 출처: ' + a.source + ' | 날짜: ' + a.date + ' | 링크: ' + a.link
-                    ).join('\n');
-                    const prompt = '당신은 한국 금융 뉴스 에디터입니다. 오늘: ' + today + '. 보유종목: ' + holdingsList + '\n\n아래 실제 수집된 기사들을 JSON 배열로 변환하세요.\n\n' + snippets + '\n\n규칙: title=한국어번역(한자금지,20자이내), summary=2문장 한국어요약, url=링크 그대로 복사(절대변경금지), date=YYYY-MM-DD, source=출처, sector=한국어섹터, subtitle=영어태그, icon=TrendingUp/TrendingDown/Globe/Cpu/DollarSign/BarChart3/Shield/Zap/Activity, keys=[종목티커]. JSON배열만 반환. 스키마: ' + schema;
-                    const articles = await groqFetch(prompt);
+                    // 제목 한국어 번역 (병렬)
+                    const articles = await translateArticles(allArticles);
+
                     const fetchedAt = new Date().toISOString();
                     localStorage.setItem(CACHE_MINE, JSON.stringify({ date: today, hash: holdingsHash, fetchedAt, articles }));
                     setMineNews(articles); setNewsUpdatedAt(fetchedAt); setNewsStatus('done');
                 } catch(e) {
-                    setMineNews(null);
-                    setNewsStatus(e.message === 'NOKEY' ? 'nokey' : 'error');
-                    setNewsErrMsg(e.message);
+                    setNewsStatus('error'); setNewsErrMsg(e.message);
                 }
-            }, [userHoldings, holdings, today, groqFetch, fetchFinnhub, fetchGoogleNewsRSS]);
+            }, [userHoldings, holdings, today]);
 
+            // ── 글로벌 뉴스 fetch ───────────────────────────────────────────
             const fetchGlobalNews = useCallback(async (force = false) => {
                 if (!force) {
                     try {
@@ -1394,52 +1367,28 @@ ${assetSummaryText}
                     } catch(e) {}
                 }
                 setNewsStatus('loading');
-                const apiKey = localStorage.getItem('muang_groq_key') || '';
-                if (!apiKey) { setNewsStatus('nokey'); return; }
                 try {
-                    // Finnhub 일반 마켓 뉴스 (category: general/forex/crypto/merger)
-                    const categories = ['general', 'forex', 'merger'];
-                    let allArticles = [];
-                    for (const cat of categories) {
-                        try {
-                            const url = 'https://finnhub.io/api/v1/news?category=' + cat + '&minId=0&token=' + FINNHUB_KEY;
-                            const r = await fetch(url, { signal: AbortSignal.timeout(6000) });
-                            if (!r.ok) continue;
-                            const data = await r.json();
-                            (Array.isArray(data) ? data : []).slice(0, 5).forEach(a => {
-                                allArticles.push({
-                                    title:  a.headline || '',
-                                    link:   a.url      || '',
-                                    source: a.source   || '',
-                                    date:   new Date(a.datetime * 1000).toISOString().split('T')[0],
-                                    desc:   (a.summary || '').slice(0, 200),
-                                });
-                            });
-                        } catch(e) {}
-                    }
-                    if (allArticles.length === 0) throw new Error('기사 없음');
-
-                    const snippets = allArticles.slice(0,20).map((a,i) =>
-                        '[' + (i+1) + '] 제목: ' + a.title + ' | 출처: ' + a.source + ' | 날짜: ' + a.date + ' | 링크: ' + a.link
-                    ).join('\n');
-                    const prompt = '당신은 한국 글로벌 금융·지정학 뉴스 에디터입니다. 오늘: ' + today + '\n\n아래 실제 수집된 Finnhub 글로벌 뉴스를 JSON 배열로 변환하세요.\n\n' + snippets + '\n\n규칙: title=한국어번역(한자금지,20자이내), summary=2문장 한국어요약+시장영향, url=링크 그대로 복사(절대변경금지), date=YYYY-MM-DD, source=출처, sector=한국어카테고리, subtitle=영어태그, keys=["MACRO"]/["GEOPOLITICS"]/["MARKET"], icon=Globe/Shield/DollarSign/TrendingDown/TrendingUp/Zap/Activity/BarChart3. JSON배열만 반환. 스키마: ' + schema;
-                    const articles = await groqFetch(prompt);
+                    const [gen, forex, merger] = await Promise.all([
+                        fetchFinnhubMarket('general'),
+                        fetchFinnhubMarket('forex'),
+                        fetchFinnhubMarket('merger'),
+                    ]);
+                    const all = [...gen, ...forex, ...merger];
+                    if (all.length === 0) throw new Error('기사 없음');
+                    const articles = await translateArticles(all);
                     const fetchedAt = new Date().toISOString();
                     localStorage.setItem(CACHE_GLOBAL, JSON.stringify({ date: today, fetchedAt, articles }));
                     setGlobalNews(articles); setNewsUpdatedAt(fetchedAt); setNewsStatus('done');
                 } catch(e) {
-                    setGlobalNews(null);
-                    setNewsStatus(e.message === 'NOKEY' ? 'nokey' : 'error');
-                    setNewsErrMsg(e.message);
+                    setNewsStatus('error'); setNewsErrMsg(e.message);
                 }
-            }, [today, groqFetch]);
+            }, [today]);
 
             const fetchLiveNews = useCallback((force = false) => {
                 if (newsFilter === 'mine') fetchMineNews(force);
                 else fetchGlobalNews(force);
             }, [newsFilter, fetchMineNews, fetchGlobalNews]);
 
-            // 탭 전환 시 해당 캐시 체크 후 fetch
             useEffect(() => {
                 if (newsFilter === 'mine') fetchMineNews(false);
                 else fetchGlobalNews(false);
@@ -1448,7 +1397,8 @@ ${assetSummaryText}
             // 첫 로드
             useEffect(() => { fetchMineNews(false); }, []);
 
-            // Fallback to static news if live fetch failed or still loading
+
+            // displayNews: 라이브 우선, 없으면 static fallback
             const displayNews = useMemo(() => {
                 const liveNews = newsFilter === 'mine' ? mineNews : globalNews;
                 if (liveNews && liveNews.length > 0) return liveNews;
@@ -1725,50 +1675,80 @@ ${assetSummaryText}
                             </div>
                         </div>
 
-                        {/* Loading skeleton */}
+                        {/* 종목 필터 탭 */}
+                        {newsFilter === 'mine' && (
+                            <div className="flex gap-1.5 flex-wrap mb-3">
+                                {['ALL', ...new Set((mineNews||[]).flatMap(a => a.keys||[]).filter(k => !['MACRO','GEOPOLITICS','MARKET','GLOBAL'].includes(k)))].map(ticker => (
+                                    <button key={ticker} onClick={() => setNewsTickerFilter(ticker)}
+                                        className={`px-3 py-1 text-[11px] font-black rounded-lg border transition-all ${newsTickerFilter===ticker ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'}`}>
+                                        {ticker === 'ALL' ? '전체' : ticker}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Loading */}
                         {newsStatus === 'loading' && !displayNews.length && (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-12">
-                                {Array.from({length:9}).map((_,i) => (
-                                    <div key={i} className="space-y-3 animate-pulse">
-                                        <div className="h-3 bg-slate-200 rounded w-1/2"></div>
-                                        <div className="h-5 bg-slate-200 rounded w-full"></div>
-                                        <div className="h-4 bg-slate-100 rounded w-4/5"></div>
-                                        <div className="h-4 bg-slate-100 rounded w-3/5"></div>
+                            <div className="space-y-3">
+                                {Array.from({length:8}).map((_,i) => (
+                                    <div key={i} className="flex gap-3 p-4 bg-white rounded-2xl border border-slate-100 animate-pulse">
+                                        <div className="w-20 h-16 bg-slate-200 rounded-xl shrink-0"/>
+                                        <div className="flex-1 space-y-2">
+                                            <div className="h-3 bg-slate-200 rounded w-1/4"/>
+                                            <div className="h-4 bg-slate-200 rounded w-3/4"/>
+                                            <div className="h-3 bg-slate-100 rounded w-full"/>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         )}
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-12">
-                            {displayNews.map((sec, idx) => {
-                                const dateStr = sec.date ? new Date(sec.date).toLocaleDateString('ko-KR', {month:'short', day:'numeric'}) : '';
-                                const daysAgo = sec.date ? Math.floor((new Date() - new Date(sec.date)) / 86400000) : null;
-                                const freshness = daysAgo !== null ? (daysAgo === 0 ? '오늘' : daysAgo <= 3 ? `${daysAgo}일 전` : daysAgo <= 14 ? `${daysAgo}일 전` : `${dateStr}`) : '';
-                                const isFresh = daysAgo !== null && daysAgo <= 7;
+                        {/* 뉴스 리스트 */}
+                        <div className="space-y-2">
+                            {(newsFilter === 'mine'
+                                ? (mineNews||[]).filter(a => newsTickerFilter==='ALL' || (a.keys||[]).includes(newsTickerFilter))
+                                : (globalNews||[])
+                            ).map((a, idx) => {
+                                const articleId = a.url || a.titleEn || '';
+                                const isRead = readArticles.has(articleId);
+                                const daysAgo = a.date ? Math.floor((Date.now() - new Date(a.date)) / 86400000) : null;
+                                const freshLabel = daysAgo === 0 ? '오늘' : daysAgo === 1 ? '1일 전' : daysAgo !== null ? daysAgo + '일 전' : '';
+                                const isFresh = daysAgo !== null && daysAgo <= 1;
+                                const sent = a.sentiment;
+                                const sentBg = sent?.score === 'bullish' ? 'bg-red-50 text-red-600 border-red-200' : sent?.score === 'bearish' ? 'bg-blue-50 text-blue-600 border-blue-200' : '';
+                                const sentLabel = sent?.score === 'bullish' ? '▲ ' + sent.bull + '%' : sent?.score === 'bearish' ? '▼ ' + sent.bear + '%' : '';
+                                const hasImg = a.image && a.image.startsWith('http');
                                 return (
-                                    <section key={idx} className="flex flex-col group">
-                                        <div className="flex items-center gap-2 mb-4 pb-2 border-b-[2px] border-slate-100 group-hover:border-blue-200 transition-colors">
-                                            <Icon name={sec.icon} className={`w-4 h-4 ${sec.color}`} />
-                                            <h3 className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">{sec.sector} <span className="font-normal opacity-60 ml-0.5">| {sec.subtitle}</span></h3>
-                                        </div>
-                                        <div className="flex-1 flex flex-col justify-start hover:bg-slate-50 p-2 -mx-2 rounded-xl transition-colors cursor-pointer">
-                                            <div className="mb-2.5 flex items-center justify-between">
-                                                <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1.5"><Icon name="Newspaper" className="w-3 h-3"/> {sec.source}</span>
-                                                {freshness && (
-                                                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${isFresh ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
-                                                        {isFresh && '🟢 '}{freshness}
-                                                    </span>
-                                                )}
+                                    <a key={idx}
+                                        href={a.url || '#'} target="_blank" rel="noopener noreferrer"
+                                        onClick={() => markRead(articleId)}
+                                        className={`flex gap-3 p-3.5 rounded-2xl border transition-all hover:shadow-md hover:border-blue-200 group ${isRead ? 'bg-slate-50 border-slate-100 opacity-50' : 'bg-white border-slate-100 hover:bg-blue-50/20'}`}>
+                                        {/* 썸네일 */}
+                                        {hasImg && (
+                                            <div className="shrink-0 w-20 h-16 rounded-xl overflow-hidden bg-slate-100">
+                                                <img src={a.image} alt="" className="w-full h-full object-cover" onError={e => e.target.parentElement.style.display='none'}/>
                                             </div>
-                                            <h4 className="font-black text-slate-900 text-base md:text-[17px] mb-3 leading-snug group-hover:text-blue-700 transition-colors">{sec.title}</h4>
-                                            <p className="text-sm text-slate-600 mb-5 line-clamp-3 leading-relaxed">{sec.summary}</p>
-                                            <div className="mt-auto pt-2">
-                                                <a href={sec.url && !sec.url.includes('news.google.com/rss') ? sec.url : `https://news.google.com/search?q=${encodeURIComponent(sec.title)}&hl=ko&gl=KR`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 text-[11px] font-bold rounded-lg hover:bg-blue-50 hover:text-blue-700 transition-colors w-fit">
-                                                    {sec.url ? "원문 보기" : "관련 기사 검색"} <Icon name="ArrowUpRight" className="w-3.5 h-3.5"/>
-                                                </a>
+                                        )}
+                                        {/* 콘텐츠 */}
+                                        <div className="flex-1 min-w-0">
+                                            {/* 메타 행 */}
+                                            <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                                <span className="text-[10px] font-bold text-slate-400">{a.source}</span>
+                                                <span className="text-slate-300 text-[10px]">·</span>
+                                                <span className={`text-[10px] font-bold ${isFresh ? 'text-green-600' : 'text-slate-400'}`}>{freshLabel}</span>
+                                                {(a.keys||[]).filter(k=>!['MACRO','GEOPOLITICS','MARKET','GLOBAL'].includes(k)).map(k=>(
+                                                    <span key={k} className="text-[10px] font-black bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md">{k}</span>
+                                                ))}
+                                                {sentLabel && <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${sentBg}`}>{sentLabel}</span>}
+                                                {isRead && <span className="text-[10px] text-slate-300">읽음</span>}
                                             </div>
+                                            {/* 한국어 제목 */}
+                                            <h4 className={`font-black text-[15px] leading-snug mb-1 group-hover:text-blue-700 transition-colors ${isRead ? 'text-slate-400' : 'text-slate-900'}`}>{a.title}</h4>
+                                            {/* 영문 원문 요약 */}
+                                            <p className="text-[12px] text-slate-400 leading-relaxed line-clamp-2">{a.summary}</p>
                                         </div>
-                                    </section>
+                                        <Icon name="ArrowUpRight" className="w-4 h-4 text-slate-200 group-hover:text-blue-400 transition-colors shrink-0 self-start mt-1"/>
+                                    </a>
                                 );
                             })}
                         </div>
