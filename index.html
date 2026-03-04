@@ -1689,81 +1689,133 @@ ${assetSummaryText}
 
                         {/* 종목 필터 탭 */}
                         {newsFilter === 'mine' && (
-                            <div className="flex gap-1.5 flex-wrap mb-3">
+                            <div className="flex gap-2 flex-wrap mb-4">
                                 {['ALL', ...new Set((mineNews||[]).flatMap(a => a.keys||[]).filter(k => !['MACRO','GEOPOLITICS','MARKET','GLOBAL'].includes(k)))].map(ticker => (
                                     <button key={ticker} onClick={() => setNewsTickerFilter(ticker)}
-                                        className={`px-3 py-1 text-[11px] font-black rounded-lg border transition-all ${newsTickerFilter===ticker ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'}`}>
+                                        className={`px-3.5 py-1.5 text-[11px] font-black rounded-full transition-all ${newsTickerFilter===ticker ? 'bg-slate-900 text-white shadow-md' : 'bg-white text-slate-500 border border-slate-200 hover:border-slate-400 hover:text-slate-800'}`}>
                                         {ticker === 'ALL' ? '전체' : ticker}
                                     </button>
                                 ))}
                             </div>
                         )}
 
-                        {/* Loading */}
+                        {/* Loading skeleton — 매거진 그리드 */}
                         {newsStatus === 'loading' && !displayNews.length && (
-                            <div className="space-y-3">
-                                {Array.from({length:8}).map((_,i) => (
-                                    <div key={i} className="flex gap-3 p-4 bg-white rounded-2xl border border-slate-100 animate-pulse">
-                                        <div className="w-20 h-16 bg-slate-200 rounded-xl shrink-0"/>
-                                        <div className="flex-1 space-y-2">
-                                            <div className="h-3 bg-slate-200 rounded w-1/4"/>
-                                            <div className="h-4 bg-slate-200 rounded w-3/4"/>
-                                            <div className="h-3 bg-slate-100 rounded w-full"/>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {Array.from({length:6}).map((_,i) => (
+                                    <div key={i} className="rounded-2xl overflow-hidden bg-white border border-slate-100 animate-pulse">
+                                        <div className="h-40 bg-slate-200"/>
+                                        <div className="p-4 space-y-2">
+                                            <div className="h-3 bg-slate-200 rounded w-1/3"/>
+                                            <div className="h-4 bg-slate-200 rounded w-full"/>
+                                            <div className="h-4 bg-slate-200 rounded w-4/5"/>
+                                            <div className="h-3 bg-slate-100 rounded w-2/3"/>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         )}
 
-                        {/* 뉴스 리스트 */}
-                        <div className="space-y-2">
-                            {(newsFilter === 'mine'
+                        {/* 매거진 그리드 */}
+                        {(() => {
+                            const articles = (newsFilter === 'mine'
                                 ? (mineNews||[]).filter(a => newsTickerFilter==='ALL' || (a.keys||[]).includes(newsTickerFilter))
                                 : (globalNews||[])
-                            ).map((a, idx) => {
-                                const articleId = a.url || a.titleEn || '';
-                                const isRead = readArticles.has(articleId);
-                                const daysAgo = a.date ? Math.floor((Date.now() - new Date(a.date)) / 86400000) : null;
-                                const freshLabel = daysAgo === 0 ? '오늘' : daysAgo === 1 ? '1일 전' : daysAgo !== null ? daysAgo + '일 전' : '';
-                                const isFresh = daysAgo !== null && daysAgo <= 1;
-                                const sent = a.sentiment;
-                                const sentBg = sent?.score === 'bullish' ? 'bg-red-50 text-red-600 border-red-200' : sent?.score === 'bearish' ? 'bg-blue-50 text-blue-600 border-blue-200' : '';
-                                const sentLabel = sent?.score === 'bullish' ? '▲ ' + sent.bull + '%' : sent?.score === 'bearish' ? '▼ ' + sent.bear + '%' : '';
-                                const hasImg = a.image && a.image.startsWith('http');
-                                return (
-                                    <a key={idx}
-                                        href={a.url || '#'} target="_blank" rel="noopener noreferrer"
-                                        onClick={() => markRead(articleId)}
-                                        className={`flex gap-3 p-3.5 rounded-2xl border transition-all hover:shadow-md hover:border-blue-200 group ${isRead ? 'bg-slate-50 border-slate-100 opacity-50' : 'bg-white border-slate-100 hover:bg-blue-50/20'}`}>
-                                        {/* 썸네일 */}
-                                        {hasImg && (
-                                            <div className="shrink-0 w-20 h-16 rounded-xl overflow-hidden bg-slate-100">
-                                                <img src={a.image} alt="" className="w-full h-full object-cover" onError={e => e.target.parentElement.style.display='none'}/>
-                                            </div>
-                                        )}
-                                        {/* 콘텐츠 */}
-                                        <div className="flex-1 min-w-0">
-                                            {/* 메타 행 */}
-                                            <div className="flex items-center gap-1.5 flex-wrap mb-1">
-                                                <span className="text-[10px] font-bold text-slate-400">{a.source}</span>
-                                                <span className="text-slate-300 text-[10px]">·</span>
-                                                <span className={`text-[10px] font-bold ${isFresh ? 'text-green-600' : 'text-slate-400'}`}>{freshLabel}</span>
-                                                {(a.keys||[]).filter(k=>!['MACRO','GEOPOLITICS','MARKET','GLOBAL'].includes(k)).map(k=>(
-                                                    <span key={k} className="text-[10px] font-black bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md">{k}</span>
-                                                ))}
-                                                {sentLabel && <span className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${sentBg}`}>{sentLabel}</span>}
-                                                {isRead && <span className="text-[10px] text-slate-300">읽음</span>}
-                                            </div>
-                                            {/* 한국어 제목 */}
-                                            <h4 className={`font-black text-[15px] leading-snug mb-1 group-hover:text-blue-700 transition-colors ${isRead ? 'text-slate-400' : 'text-slate-900'}`}>{a.title}</h4>
-                                            {/* 영문 원문 요약 */}
-                                            <p className="text-[12px] text-slate-400 leading-relaxed line-clamp-2">{a.summary}</p>
-                                        </div>
-                                        <Icon name="ArrowUpRight" className="w-4 h-4 text-slate-200 group-hover:text-blue-400 transition-colors shrink-0 self-start mt-1"/>
-                                    </a>
-                                );
-                            })}
-                        </div>
+                            );
+                            if (!articles.length) return null;
+
+                            // 첫 번째 기사는 히어로, 나머지는 그리드
+                            return (
+                                <div className="space-y-4">
+                                    {/* 히어로 카드 (첫 번째) */}
+                                    {(() => {
+                                        const a = articles[0];
+                                        const articleId = a.url || a.titleEn || '';
+                                        const isRead = readArticles.has(articleId);
+                                        const daysAgo = a.date ? Math.floor((Date.now()-new Date(a.date))/86400000) : null;
+                                        const freshLabel = daysAgo===0?'오늘':daysAgo===1?'1일 전':daysAgo!==null?daysAgo+'일 전':'';
+                                        const sent = a.sentiment;
+                                        const sentLabel = sent?.score==='bullish'?'▲ BULLISH':sent?.score==='bearish'?'▼ BEARISH':'';
+                                        const sentColor = sent?.score==='bullish'?'bg-red-500':sent?.score==='bearish'?'bg-blue-600':'bg-slate-500';
+                                        const hasImg = a.image && a.image.startsWith('http');
+                                        return (
+                                            <a href={a.url||'#'} target="_blank" rel="noopener noreferrer"
+                                                onClick={() => markRead(articleId)}
+                                                className={`block rounded-3xl overflow-hidden border group transition-all hover:shadow-xl ${isRead?'opacity-50':'border-slate-100 hover:border-slate-300'}`}>
+                                                <div className="relative h-56 md:h-72 bg-gradient-to-br from-slate-800 to-slate-900 overflow-hidden">
+                                                    {hasImg && <img src={a.image} alt="" className="w-full h-full object-cover opacity-60 group-hover:opacity-70 group-hover:scale-105 transition-all duration-500" onError={e=>e.target.style.display='none'}/>}
+                                                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"/>
+                                                    <div className="absolute bottom-0 left-0 right-0 p-5">
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            {sentLabel && <span className={`text-[10px] font-black text-white px-2 py-0.5 rounded-full ${sentColor}`}>{sentLabel}</span>}
+                                                            {(a.keys||[]).filter(k=>!['MACRO','GEOPOLITICS','MARKET','GLOBAL'].includes(k)).map(k=>(
+                                                                <span key={k} className="text-[10px] font-black bg-white/20 text-white px-2 py-0.5 rounded-full backdrop-blur-sm">{k}</span>
+                                                            ))}
+                                                            <span className="text-[10px] text-white/60 ml-auto">{freshLabel}</span>
+                                                        </div>
+                                                        <h3 className="text-white font-black text-xl md:text-2xl leading-snug group-hover:text-blue-200 transition-colors">{a.title}</h3>
+                                                        <p className="text-white/60 text-sm mt-1.5 line-clamp-2">{a.summary}</p>
+                                                        <span className="text-white/40 text-[11px] mt-2 block">{a.source}</span>
+                                                    </div>
+                                                </div>
+                                            </a>
+                                        );
+                                    })()}
+
+                                    {/* 나머지 — 3열 그리드 */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                        {articles.slice(1).map((a, idx) => {
+                                            const articleId = a.url || a.titleEn || '';
+                                            const isRead = readArticles.has(articleId);
+                                            const daysAgo = a.date ? Math.floor((Date.now()-new Date(a.date))/86400000) : null;
+                                            const freshLabel = daysAgo===0?'오늘':daysAgo===1?'1일 전':daysAgo!==null?daysAgo+'일 전':'';
+                                            const isFresh = daysAgo!==null && daysAgo<=1;
+                                            const sent = a.sentiment;
+                                            const sentLabel = sent?.score==='bullish'?'▲':sent?.score==='bearish'?'▼':'';
+                                            const sentColor = sent?.score==='bullish'?'text-red-500':sent?.score==='bearish'?'text-blue-500':'text-slate-400';
+                                            const hasImg = a.image && a.image.startsWith('http');
+                                            const tickers = (a.keys||[]).filter(k=>!['MACRO','GEOPOLITICS','MARKET','GLOBAL'].includes(k));
+                                            return (
+                                                <a key={idx}
+                                                    href={a.url||'#'} target="_blank" rel="noopener noreferrer"
+                                                    onClick={() => markRead(articleId)}
+                                                    className={`group flex flex-col rounded-2xl border overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5 ${isRead?'opacity-40 bg-slate-50 border-slate-100':'bg-white border-slate-100 hover:border-slate-300'}`}>
+                                                    {/* 이미지 or 컬러 블록 */}
+                                                    <div className="relative h-32 overflow-hidden bg-gradient-to-br from-slate-100 to-slate-200 shrink-0">
+                                                        {hasImg
+                                                            ? <img src={a.image} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" onError={e=>e.target.parentElement.className='relative h-32 overflow-hidden bg-gradient-to-br from-slate-100 to-slate-200 shrink-0'}/>
+                                                            : <div className="w-full h-full flex items-center justify-center"><Icon name={a.icon||'Newspaper'} className="w-8 h-8 text-slate-300"/></div>
+                                                        }
+                                                        {/* 티커 배지 */}
+                                                        {tickers.length > 0 && (
+                                                            <div className="absolute top-2 left-2 flex gap-1">
+                                                                {tickers.map(k=>(
+                                                                    <span key={k} className="text-[10px] font-black bg-slate-900/70 text-white px-2 py-0.5 rounded-full backdrop-blur-sm">{k}</span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {sentLabel && (
+                                                            <span className={`absolute top-2 right-2 text-[11px] font-black ${sentColor} bg-white/90 px-1.5 py-0.5 rounded-full backdrop-blur-sm`}>{sentLabel}</span>
+                                                        )}
+                                                    </div>
+                                                    {/* 텍스트 */}
+                                                    <div className="flex flex-col flex-1 p-3.5">
+                                                        <div className="flex items-center gap-1.5 mb-2">
+                                                            <span className="text-[10px] font-bold text-slate-400 truncate">{a.source}</span>
+                                                            <span className="text-slate-200 text-[10px] shrink-0">·</span>
+                                                            <span className={`text-[10px] font-bold shrink-0 ${isFresh?'text-green-500':'text-slate-400'}`}>{freshLabel}</span>
+                                                            {isRead && <span className="text-[10px] text-slate-300 ml-auto shrink-0">✓</span>}
+                                                        </div>
+                                                        <h4 className={`font-black text-sm leading-snug flex-1 group-hover:text-blue-700 transition-colors ${isRead?'text-slate-400':'text-slate-900'}`}>{a.title}</h4>
+                                                        <p className="text-[11px] text-slate-400 mt-2 line-clamp-2 leading-relaxed">{a.summary}</p>
+                                                    </div>
+                                                </a>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </main>
                 </div>
             );
