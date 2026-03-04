@@ -1724,6 +1724,27 @@ ${assetSummaryText}
                             );
                             if (!articles.length) return null;
 
+                            // 티커별 그라디언트
+                            const tickerGrad = (ticker) => {
+                                const map = {
+                                    CARR:'linear-gradient(135deg,#1e3a5f,#2d6a9f)',
+                                    TT:  'linear-gradient(135deg,#1a3a2a,#2d7a4f)',
+                                    GM:  'linear-gradient(135deg,#1a1a2e,#16213e)',
+                                    SGOV:'linear-gradient(135deg,#1e3a5f,#0f4c75)',
+                                    JEPI:'linear-gradient(135deg,#2d1b69,#4a2c8a)',
+                                    JEPQ:'linear-gradient(135deg,#1b2d69,#2c4a8a)',
+                                    KORU:'linear-gradient(135deg,#3d1515,#8a2c2c)',
+                                    TQQQ:'linear-gradient(135deg,#1a2a1a,#2d6b2d)',
+                                    SOXL:'linear-gradient(135deg,#2a1a2a,#6b2d6b)',
+                                    QQQ: 'linear-gradient(135deg,#1a2a3a,#2d4a6b)',
+                                    SPY: 'linear-gradient(135deg,#1a1a3a,#2d2d6b)',
+                                    NKE: 'linear-gradient(135deg,#1a2a1a,#2d5a2d)',
+                                    COPX:'linear-gradient(135deg,#3a1a0a,#8a3a0a)',
+                                    XLV: 'linear-gradient(135deg,#0a3a1a,#0a8a3a)',
+                                };
+                                return map[ticker] || 'linear-gradient(135deg,#1e2a3a,#2d3a4a)';
+                            };
+
                             // 첫 번째 기사는 히어로, 나머지는 그리드
                             return (
                                 <div className="space-y-4">
@@ -1742,8 +1763,9 @@ ${assetSummaryText}
                                             <a href={a.url||'#'} target="_blank" rel="noopener noreferrer"
                                                 onClick={() => markRead(articleId)}
                                                 className={`block rounded-3xl overflow-hidden border group transition-all hover:shadow-xl ${isRead?'opacity-50':'border-slate-100 hover:border-slate-300'}`}>
-                                                <div className="relative h-56 md:h-72 bg-gradient-to-br from-slate-800 to-slate-900 overflow-hidden">
-                                                    {hasImg && <img src={a.image} alt="" className="w-full h-full object-cover opacity-60 group-hover:opacity-70 group-hover:scale-105 transition-all duration-500" onError={e=>e.target.style.display='none'}/>}
+                                                <div className="relative h-56 md:h-72 overflow-hidden" style={{background: tickerGrad((a.keys||[]).find(k=>!['MACRO','GEOPOLITICS','MARKET','GLOBAL'].includes(k)))}}>
+                                                    {hasImg && <img src={a.image} alt="" className="w-full h-full object-cover absolute inset-0 opacity-20 group-hover:opacity-30 group-hover:scale-105 transition-all duration-500" onError={e=>e.target.style.display='none'}/> }
+                                                    <div className="absolute top-3 right-5 text-white/10 font-black text-9xl leading-none select-none pointer-events-none">{(a.keys||[]).find(k=>!['MACRO','GEOPOLITICS','MARKET','GLOBAL'].includes(k))?.[0]||'$'}</div>
                                                     <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"/>
                                                     <div className="absolute bottom-0 left-0 right-0 p-5">
                                                         <div className="flex items-center gap-2 mb-2">
@@ -1780,23 +1802,21 @@ ${assetSummaryText}
                                                     href={a.url||'#'} target="_blank" rel="noopener noreferrer"
                                                     onClick={() => markRead(articleId)}
                                                     className={`group flex flex-col rounded-2xl border overflow-hidden transition-all hover:shadow-lg hover:-translate-y-0.5 ${isRead?'opacity-40 bg-slate-50 border-slate-100':'bg-white border-slate-100 hover:border-slate-300'}`}>
-                                                    {/* 이미지 or 컬러 블록 */}
-                                                    <div className="relative h-32 overflow-hidden bg-gradient-to-br from-slate-100 to-slate-200 shrink-0">
-                                                        {hasImg
-                                                            ? <img src={a.image} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" onError={e=>e.target.parentElement.className='relative h-32 overflow-hidden bg-gradient-to-br from-slate-100 to-slate-200 shrink-0'}/>
-                                                            : <div className="w-full h-full flex items-center justify-center"><Icon name={a.icon||'Newspaper'} className="w-8 h-8 text-slate-300"/></div>
-                                                        }
-                                                        {/* 티커 배지 */}
-                                                        {tickers.length > 0 && (
-                                                            <div className="absolute top-2 left-2 flex gap-1">
-                                                                {tickers.map(k=>(
-                                                                    <span key={k} className="text-[10px] font-black bg-slate-900/70 text-white px-2 py-0.5 rounded-full backdrop-blur-sm">{k}</span>
-                                                                ))}
+                                                    {/* 컬러 헤더 블록 — 이미지 없이 티커 컬러로 */}
+                                                    <div className="relative h-28 shrink-0 overflow-hidden" style={{background: tickerGrad(tickers[0])}}>
+                                                        <div className="absolute inset-0 flex flex-col justify-end p-3">
+                                                            <div className="flex items-end justify-between">
+                                                                <div>
+                                                                    {tickers.length > 0 && <span className="text-white font-black text-2xl opacity-90 leading-none">{tickers[0]}</span>}
+                                                                    {tickers.slice(1).map(k=><span key={k} className="text-white/60 font-bold text-sm ml-1.5">{k}</span>)}
+                                                                </div>
+                                                                {sentLabel && (
+                                                                    <span className={`text-sm font-black ${sent?.score==='bullish'?'text-green-300':sent?.score==='bearish'?'text-red-300':'text-white/40'}`}>{sentLabel}</span>
+                                                                )}
                                                             </div>
-                                                        )}
-                                                        {sentLabel && (
-                                                            <span className={`absolute top-2 right-2 text-[11px] font-black ${sentColor} bg-white/90 px-1.5 py-0.5 rounded-full backdrop-blur-sm`}>{sentLabel}</span>
-                                                        )}
+                                                        </div>
+                                                        {/* 배경 패턴 */}
+                                                        <div className="absolute top-2 right-3 text-white/10 font-black text-6xl leading-none select-none">{tickers[0]?.[0]||'$'}</div>
                                                     </div>
                                                     {/* 텍스트 */}
                                                     <div className="flex flex-col flex-1 p-3.5">
