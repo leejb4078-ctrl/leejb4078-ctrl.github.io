@@ -2276,7 +2276,13 @@ ${assetSummaryText}
                                             </linearGradient>
                                         </defs>
                                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9"/>
-                                        <XAxis dataKey="date" tickFormatter={t=>t.substring(5).replace('-','/')} fontSize={10} tickLine={false} axisLine={false} tick={{fill:'#94a3b8'}} dy={8}/>
+                                        <XAxis dataKey="date" tickFormatter={t => {
+                                            if (!t) return '';
+                                            const s = t.toString().trim();
+                                            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.substring(5).replace('-','/');
+                                            try { const d = new Date(s); if (!isNaN(d.getTime())) return (d.getMonth()+1).toString().padStart(2,'0') + '/' + d.getDate().toString().padStart(2,'0'); } catch(e) {}
+                                            return s.slice(0,5);
+                                        }} fontSize={10} tickLine={false} axisLine={false} tick={{fill:'#94a3b8'}} dy={8}/>
                                         <YAxis tickFormatter={v=>`${Math.round(v/10000)}만`} fontSize={10} tickLine={false} axisLine={false} tick={{fill:'#94a3b8'}} width={46}/>
                                         <Tooltip
                                             formatter={(val) => [`${Math.round(val/10000).toLocaleString()}만원`, '총자산']}
@@ -2803,8 +2809,31 @@ ${assetSummaryText}
                 try { return JSON.parse(localStorage.getItem('muang_sector_targets') || 'null') || DEFAULT_SECTOR_TARGETS; } catch(e) { return DEFAULT_SECTOR_TARGETS; }
             });
             const [history, setHistory] = useState(() => {
-                try { return JSON.parse(localStorage.getItem('muang_history') || '[]'); }
-                catch(e) { return []; }
+                try {
+                    const raw = JSON.parse(localStorage.getItem('muang_history') || '[]');
+                    // 날짜 정규화 (저장된 나쁜 형식 처리)
+                    const normalizeDate = (d) => {
+                        if (!d) return null;
+                        const s = d.toString().trim();
+                        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+                        try {
+                            const p = new Date(s);
+                            if (isNaN(p.getTime())) return null;
+                            return p.toISOString().split('T')[0];
+                        } catch(e) { return null; }
+                    };
+                    // 정규화 + 날짜별 중복 제거 (마지막 값 유지)
+                    const merged = {};
+                    raw.forEach(h => {
+                        const d = normalizeDate(h.date);
+                        if (d && h.total) merged[d] = h.total;
+                    });
+                    const result = Object.entries(merged)
+                        .map(([date, total]) => ({ date, total }))
+                        .sort((a,b) => a.date.localeCompare(b.date));
+                    localStorage.setItem('muang_history', JSON.stringify(result));
+                    return result;
+                } catch(e) { return []; }
             });
 
             const logAction = useCallback((action, name, detail, customDate = null) => {
